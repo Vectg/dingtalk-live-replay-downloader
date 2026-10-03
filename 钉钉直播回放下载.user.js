@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.0
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、并发与重试、多码率、AES-128、fMP4、进度动画。无需登录。
+// @version      1.6.1
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -10,6 +10,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      *
 // @connect      lv.dingtalk.com
 // @connect      dtliving-sz.dingtalk.com
@@ -599,6 +601,13 @@
         #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
         #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
+        /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
+        #dlr-panel.frost{background:rgba(22,24,29,.72);-webkit-backdrop-filter:blur(14px) saturate(150%);
+            backdrop-filter:blur(14px) saturate(150%);border-color:rgba(255,255,255,.09);
+            box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07)}
+        #dlr-panel.frost input[type=text],#dlr-panel.frost input[type=number],
+        #dlr-panel.frost select,#dlr-panel.frost #dlr-status,#dlr-panel.frost #dlr-progress{
+            background:rgba(10,11,14,.62)}
     `);
 
     const $ = (id) => document.getElementById(id);
@@ -635,6 +644,7 @@
             <div class="row">
                 <label class="chk"><input type="checkbox" id="dlr-remember">记住保存路径</label>
                 <label class="chk"><input type="checkbox" id="dlr-stamp">文件名加时间戳</label>
+                <label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label>
             </div>
         </div>
         <div class="sec"><div class="row"><button id="dlr-go" class="primary"><span id="dlr-spin"></span>下载本页回放</button></div></div>
@@ -890,6 +900,19 @@
             statusEl.textContent = logBuffer.join('\n');
             logBuffer.length = 0;
         }
+
+        // 毛玻璃：开关状态持久化，刷新后保留
+        const frost = $('dlr-frost');
+        try {
+            const saved = GM_getValue('dlr_frost');
+            if (saved !== undefined && saved !== null) frost.checked = !!saved;
+        } catch (e) {}
+        const applyFrost = () => {
+            panel.classList.toggle('frost', frost.checked);
+            try { GM_setValue('dlr_frost', frost.checked); } catch (e) {}
+        };
+        frost.addEventListener('change', applyFrost);
+        applyFrost();
 
         $('dlr-go').addEventListener('click', () => {
             const raw = ($('dlr-url').value || '').trim() || location.href;

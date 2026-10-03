@@ -11,17 +11,33 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.6.0）
+## 功能（v1.6.1）
+
+**核心**
 
 - **无需登录**：`csrf` → `getOpenLiveInfoV2` 取带签名的播放地址，全程匿名。
 - **输出 MP4（默认）/ TS**：`.mp4` 由 `mux.js` 在浏览器内转封装；`.ts` 为原始拼接，兼容性最好。
 - **MP4 时长与进度条已修复**：`mux.js` 输出的 `moov/mvhd/mdhd` duration 写成 `0xFFFFFFFF`（unknown 哨兵），播放器会显示成十几小时、拖不动进度条、画面卡死。脚本遍历 `moof` 用 `tfdt + Σtrun` 算出真实时长写回，30 分钟回放即显示 30 分钟，文件大小不变。
-- **截取时长**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。
-- **内置预览**：下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
 - **失败诊断**：切片失败给出序号 + URL + 原因，并按错误类型给排查建议（401/403 签名过期、404 回放已清理、其他降并发/更新脚本）。
 - **进度动画**：进度条 + 分段日志，实时显示 `n/N` 与 MB/s。
-- **多码率 / AES-128 / fMP4 / BYTERANGE**：遇 `#EXT-X-STREAM-INF` 自动选最高带宽递归；遇 `#EXT-X-KEY` 用 Web Crypto 解密；支持 `#EXT-X-MAP` 与 `#EXT-X-BYTERANGE`。
-- **并发线程**（1–16，默认 5）、**重试次数**（1–10，默认 3，指数退避）、**记住保存路径**、**文件名加时间戳**。
+
+**下载后处理**
+
+- **截取时长**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。
+- **内置预览**：MP4 下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
+- **记住保存路径** / **文件名加时间戳**。
+
+**面板外观**
+
+- **毛玻璃**：勾选「毛玻璃」后面板变为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态用 `GM_setValue` 持久化，刷新后保留。不勾选时为不透明深色背景，无模糊开销。
+- **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼。
+
+**协议兼容**
+
+- **多码率**：遇 `#EXT-X-STREAM-INF` 自动选最高带宽递归。
+- **AES-128**：遇 `#EXT-X-KEY` 用 Web Crypto 拉 key 逐片解密。
+- **fMP4 / BYTERANGE**：支持 `#EXT-X-MAP` 初始化段与 `#EXT-X-BYTERANGE` 字节范围。
+- **并发**（1–16，默认 5）与**重试**（1–10，默认 3，指数退避）。
 
 ---
 
@@ -45,7 +61,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 ## 使用
 
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
-2. 按需设置：**输出格式**、**截取时长**（`mm:ss` 或 `hh:mm:ss`，留空为全部）、并发、重试。
+2. 按需设置：**输出格式**、**截取时长**（`mm:ss` 或 `hh:mm:ss`，留空为全部）、并发、重试；想要面板透出底层画面就勾**「毛玻璃」**。
 3. 点「下载本页回放」，进度条依次显示：取 token → 播放地址 → m3u8 → 切片 `n/N` → 拼接 → 保存。
 4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速与音量；同时弹出保存对话框。
 5. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页。
@@ -77,7 +93,7 @@ Windows 下中文文件名/引号易出问题，建议用 Python `subprocess.run
 - `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
 - 回放签名约 10 天有效，过期后重新点一次下载即可。
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
-- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
+- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住毛玻璃开关）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
 
 ---
 
