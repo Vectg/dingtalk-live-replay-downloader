@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.2
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      1.6.4
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -41,8 +41,12 @@
             if (logBuffer.length > 200) logBuffer.shift();
             return;
         }
-        statusEl.textContent += '\n' + String(msg);
-        statusEl.scrollTop = statusEl.scrollHeight;
+        // 单行模式：只保留最新一行，前缀加时间
+        const now = new Date();
+        const t = String(now.getHours()).padStart(2, '0') + ':' +
+            String(now.getMinutes()).padStart(2, '0') + ':' +
+            String(now.getSeconds()).padStart(2, '0');
+        statusEl.textContent = t + '  ' + String(msg);
     }
 
     function setStatus(msg, isErr) {
@@ -590,8 +594,9 @@
         @keyframes dlrSlide{from{background-position:0 0}to{background-position:32px 0}}
         @keyframes dlrSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
         #dlr-spin{display:none;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:dlrSpin .8s linear infinite;vertical-align:-2px;margin-right:6px}
-        #dlr-status{margin-top:8px;padding:8px;background:#0f1115;border:1px solid #23262e;border-radius:6px;
-            white-space:pre-wrap;max-height:170px;overflow:auto;font-size:12px;color:#aeb3bd}
+        #dlr-status{margin-top:8px;padding:6px 8px;background:#0f1115;border:1px solid #23262e;border-radius:6px;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#aeb3bd;
+            display:flex;align-items:center;min-height:28px}
         #dlr-panel .err{color:#ff7a7a}
         #dlr-preview{display:none;margin-top:10px;border-top:1px solid #23262e;padding-top:10px}
         #dlr-preview .ph{position:relative;background:#000;border-radius:8px;overflow:hidden}
@@ -601,6 +606,35 @@
         #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
         #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
+        /* 收缩态：只显示一个小药丸图标 */
+        #dlr-panel.mini{width:auto;max-width:200px;padding:0;border-radius:999px;overflow:hidden;
+            background:rgba(22,24,29,.85)}
+        #dlr-panel.mini .expand{padding:7px 13px;font-size:12px}
+        #dlr-panel.mini .expand .lb{display:none}
+        #dlr-panel.mini.frost{background:rgba(22,24,29,.55)}
+        #dlr-panel.mini .collapse,
+        #dlr-panel.mini h3,
+        #dlr-panel.mini .sec,#dlr-panel.mini .sub,
+        #dlr-panel.mini #dlr-progress,#dlr-panel.mini #dlr-status,#dlr-panel.mini #dlr-preview,
+        #dlr-panel.mini .tip,#dlr-panel.mini .foot{display:none}
+        #dlr-panel.mini .expand{display:flex}
+        /* 展开态：默认隐藏展开按钮 */
+        #dlr-panel .expand{display:none;align-items:center;gap:7px;cursor:pointer;
+            padding:8px 14px;color:#d7d9de;font-size:12px;user-select:none}
+        #dlr-panel .expand .ic{width:22px;height:22px;border-radius:50%;background:#3d6eff;
+            color:#fff;display:flex;align-items:center;justify-content:center;
+            font-size:12px;font-weight:700;flex:none}
+        #dlr-panel .expand:hover{background:rgba(255,255,255,.05)}
+        /* 收缩按钮（展开态右上角） */
+        #dlr-panel .collapse{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.06);
+            color:#9aa0ab;border:1px solid #2c303a;border-radius:5px;padding:1px 8px;
+            cursor:pointer;font-size:12px;line-height:1.5;margin:0}
+        #dlr-panel .collapse:hover{background:rgba(255,255,255,.12);color:#d7d9de}
+        /* 作者标注 */
+        #dlr-panel .foot{margin-top:10px;padding-top:7px;border-top:1px solid #23262e;
+            font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
+        #dlr-panel .foot a{color:#7d828d;text-decoration:none}
+        #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
         #dlr-panel.frost{background:rgba(22,24,29,.72);-webkit-backdrop-filter:blur(14px) saturate(150%);
             backdrop-filter:blur(14px) saturate(150%);border-color:rgba(255,255,255,.09);
@@ -614,11 +648,18 @@
 
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
+    panel.style.position = 'relative';   // 供收缩按钮绝对定位
     panel.innerHTML = `
+        <div class="expand" title="展开面板"><span class="ic">⬇</span><span class="lb">钉钉直播回放下载</span></div>
+        <button class="collapse" title="收缩为图标">收起</button>
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
         <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div></div>
         <div class="sec">
+            <div class="row">
+                <label>文件名</label>
+                <input type="text" id="dlr-name" placeholder="留空 = 用回放标题" style="flex:1">
+            </div>
             <div class="row">
                 <label>格式</label>
                 <select id="dlr-fmt" style="flex:1">
@@ -651,6 +692,7 @@
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
         <div id="dlr-status">就绪。</div>
         <div id="dlr-preview"></div>
+        <div class="foot">作者 <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a></div>
     `;
 
     function parseUrl(url) {
@@ -759,9 +801,13 @@
 
             appendLog('② 获取播放地址 getOpenLiveInfoV2 ...');
             const model = await getPlayback(roomId, liveUuid, token);
-            const baseName = sanitize(model.title || liveUuid);
+            const autoName = sanitize(model.title || liveUuid);
+            // 面板填了文件名就优先用，并清掉用户可能误带的后缀
+            const customName = sanitize(opts.name || '').trim();
+            const baseName = customName.replace(/\.(mp4|ts|m4s|mp3)$/i, '') || autoName;
             appendLog('   标题: ' + model.title +
-                '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知'));
+                '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知') +
+                (customName ? '  文件名: ' + baseName : ''));
             progressSet(P.prep, '准备');
 
             appendLog('③ 拉取 m3u8 ...');
@@ -828,20 +874,17 @@
             };
             await Promise.all(Array.from({ length: opts.threads }, worker));
 
-            // 失败诊断：序号 + URL + 原因 + 可操作的排查建议
+            // 失败诊断：单行模式，压成一条总结 + 建议（合并进最终错误消息）
             if (failures.length) {
-                appendLog('   ❌ ' + failures.length + ' 个切片失败：');
-                failures.slice(0, 5).forEach((f) => {
-                    appendLog('      #' + f.index + '  ' + f.reason);
-                    appendLog('         ' + f.url.slice(0, 110));
-                });
-                if (failures.length > 5) appendLog('      …另有 ' + (failures.length - 5) + ' 个');
+                const first = failures[0];
                 const allAuth = failures.every((f) => /HTTP (401|403)/.test(f.reason));
                 const all404 = failures.every((f) => /HTTP 404/.test(f.reason));
-                if (allAuth) appendLog('   建议：多为 auth_key 签名过期（约 10 天有效期），刷新页面重新获取链接。');
-                else if (all404) appendLog('   建议：切片已过期或被清理，回放可能已失效。');
-                else appendLog('   建议：可降低并发线程数后重试，或点「检查更新」确认脚本为最新版。');
-                throw new Error('下载未完成：' + failures.length + '/' + segs.length + ' 个切片失败');
+                let advice;
+                if (allAuth) advice = '多为 auth_key 签名过期（约 10 天有效），刷新页面重新获取链接';
+                else if (all404) advice = '切片已过期或被清理，回放可能已失效';
+                else advice = '可降低并发线程数后重试，或点「检查更新」确认脚本为最新版';
+                appendLog('❌ ' + failures.length + '/' + segs.length + ' 切片失败：#' + first.index + ' ' + first.reason);
+                throw new Error(failures.length + '/' + segs.length + ' 切片失败（#' + first.index + ' ' + first.reason + '）。建议：' + advice);
             }
 
             appendLog('⑤ 拼接 ...');
@@ -895,9 +938,9 @@
     function init() {
         document.body.appendChild(panel);
         statusEl = $('dlr-status');
-        // 回放挂载前缓存的日志
+        // 面板挂载前缓存的日志：单行模式只回放最后一条
         if (logBuffer.length) {
-            statusEl.textContent = logBuffer.join('\n');
+            statusEl.textContent = logBuffer[logBuffer.length - 1];
             logBuffer.length = 0;
         }
 
@@ -915,6 +958,31 @@
         };
         frost.addEventListener('change', applyFrost);
         applyFrost();
+
+        // 收缩 / 展开：不用时缩成一个小图标，状态持久化
+        const applyMini = () => panel.classList.toggle('mini', miniState);
+        let miniState = false;
+        try {
+            const saved = GM_getValue('dlr_mini');
+            miniState = !(saved === undefined || saved === null) && !!saved;
+        } catch (e) {}
+        const setMini = (v) => {
+            miniState = v;
+            try { GM_setValue('dlr_mini', v); } catch (e) {}
+            applyMini();
+        };
+        const exp = panel.querySelector('.expand');
+        const col = panel.querySelector('.collapse');
+        exp.addEventListener('click', () => setMini(false));
+        col.addEventListener('click', () => {
+            // 下载进行中不允许收缩，避免看不到进度
+            if ($('dlr-go').disabled) {
+                setStatus('⏳ 下载进行中，请先完成或失败后再收起面板。', true);
+                return;
+            }
+            setMini(true);
+        });
+        applyMini();
 
         $('dlr-go').addEventListener('click', () => {
             const raw = ($('dlr-url').value || '').trim() || location.href;
