@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.7.1
+// @version      1.7.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -664,6 +664,20 @@
         #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
         #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
+        /* 更多设置：可折叠小面板 */
+        #dlr-panel .more-toggle{display:flex;align-items:center;justify-content:space-between;
+            font-size:12px;color:#9aa0ab;cursor:pointer;user-select:none;
+            padding:2px 0;transition:color 150ms cubic-bezier(0.4,0,0.2,1)}
+        #dlr-panel .more-toggle:hover{color:#d7d9de}
+        #dlr-panel .mt-ic{display:inline-block;transition:transform 220ms cubic-bezier(0.16,1,0.3,1);
+            font-size:14px;line-height:1;transform:rotate(90deg);color:#6d727c}
+        #dlr-panel .more-toggle[aria-expanded="true"] .mt-ic{transform:rotate(270deg);color:#3d6eff}
+        #dlr-panel .more-body{display:grid;grid-template-rows:0fr;
+            transition:grid-template-rows 260ms cubic-bezier(0.16,1,0.3,1),
+                opacity 200ms cubic-bezier(0.4,0,0.2,1);opacity:0}
+        #dlr-panel .more-body>div{overflow:hidden;min-height:0}
+        #dlr-panel .more-body.open{grid-template-rows:1fr;opacity:1}
+        #dlr-panel .more-body .row:first-child{margin-top:6px}
         /* 收缩态：只显示一个小药丸图标（宽度 50px 为定值，可与展开态 392px 直接补间） */
         #dlr-panel.mini{width:50px;padding:0;border-radius:999px}
         #dlr-panel.mini .body{width:50px;border-radius:999px;
@@ -734,7 +748,10 @@
         <div class="sec">
             <div class="row">
                 <label>文件名</label>
-                <input type="text" id="dlr-name" placeholder="留空 = 用回放标题" style="flex:1">
+                <input type="text" id="dlr-name" placeholder="回放标题解析中…" style="flex:1">
+            </div>
+            <div class="row">
+                <label class="chk"><input type="checkbox" id="dlr-stamp">文件名加时间戳</label>
             </div>
             <div class="row">
                 <label>格式</label>
@@ -751,22 +768,24 @@
             </div>
             <div class="tip">截取留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。</div>
         </div>
-        <div class="sec">
-            <div class="row">
-                <label>并发线程</label>
-                <input type="number" id="dlr-thread" min="1" max="16" value="5">
-                <label style="min-width:48px">重试</label>
-                <input type="number" id="dlr-retry" min="1" max="10" value="3">
-            </div>
-            <div class="row">
-                <label class="chk"><input type="checkbox" id="dlr-stamp">文件名加时间戳</label>
-                <label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label>
-            </div>
-        </div>
         <div class="sec"><div class="row"><button id="dlr-go" class="primary"><span id="dlr-spin"></span>下载本页回放</button></div></div>
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
         <div id="dlr-status">就绪。</div>
         <div id="dlr-preview"></div>
+        <div class="sec">
+            <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic">›</span></div>
+            <div class="more-body" id="dlr-more-b"><div>
+                <div class="row">
+                    <label>并发线程</label>
+                    <input type="number" id="dlr-thread" min="1" max="16" value="5">
+                    <label style="min-width:48px">重试</label>
+                    <input type="number" id="dlr-retry" min="1" max="10" value="3">
+                </div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label></div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label></div>
+                <div class="tip">预取播放地址与切片索引，打开页面后无需等待即可直接下载。</div>
+            </div></div>
+        </div>
         <div class="foot">
             <span>v<span id="dlr-ver">--</span></span>
             <span style="color:#3a3f4b">·</span>
@@ -875,6 +894,32 @@
         }
     }
 
+    // ---------- 预解析：csrf → 播放地址 → m3u8，可被 run() 复用 ----------
+    // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
+    let prepCache = null;      // {key, at, token, model, parsed}
+    const PREP_TTL = 10 * 60 * 1000;
+    async function prep(roomId, liveUuid) {
+        const key = roomId + '|' + liveUuid;
+        const fresh = prepCache && prepCache.key === key &&
+            (Date.now() - prepCache.at) < PREP_TTL;
+        if (fresh) return prepCache;
+
+        const token = await getCsrf();
+        appendLog('① CSRF token (' + token.slice(0, 8) + '...)');
+        appendLog('② 获取播放地址 getOpenLiveInfoV2 ...');
+        const model = await getPlayback(roomId, liveUuid, token);
+        appendLog('   标题: ' + model.title +
+            '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知'));
+        appendLog('③ 拉取 m3u8 ...');
+        const parsed = await fetchAndParseM3u8(model.playbackUrl);
+        if (parsed.totalDur) {
+            appendLog('   回放总时长 ' + fmtTime(parsed.totalDur) +
+                '（' + parsed.segments.length + ' 个切片）');
+        }
+        prepCache = { key, at: Date.now(), token, model, parsed };
+        return prepCache;
+    }
+
     async function run(roomId, liveUuid, opts) {
         const goBtn = $('dlr-go');
         goBtn.disabled = true;
@@ -882,24 +927,12 @@
         // 各阶段在整条进度条上的落点：切片下载占 5%~92%，其余为准备/转封装/保存
         const P = { prep: 5, dlStart: 5, dlEnd: 92, mux: 96, save: 99 };
         try {
-            const token = await getCsrf();
-            appendLog('① CSRF token (' + token.slice(0, 8) + '...)');
-
-            appendLog('② 获取播放地址 getOpenLiveInfoV2 ...');
-            const model = await getPlayback(roomId, liveUuid, token);
+            const { model, parsed } = await prep(roomId, liveUuid);
             // 留空 = 用回放标题；填了则优先，并自动去掉误带的后缀
             const autoName = safeName(model.title, liveUuid);
             const baseName = safeName(opts.name, autoName);
-            appendLog('   标题: ' + model.title +
-                '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知') +
-                (opts.name ? '  文件名: ' + baseName : ''));
+            appendLog('   文件名: ' + baseName);
             progressSet(P.prep, '准备');
-
-            appendLog('③ 拉取 m3u8 ...');
-            const parsed = await fetchAndParseM3u8(model.playbackUrl);
-            if (parsed.totalDur) {
-                appendLog('   回放总时长 ' + fmtTime(parsed.totalDur) + '（' + parsed.segments.length + ' 个切片）');
-            }
 
             // 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确）
             const clip = clipSegments(parsed.segments, opts.clipFrom, opts.clipTo);
@@ -1087,18 +1120,57 @@
             logBuffer.length = 0;
         }
 
-        // 毛玻璃：默认开启，开关状态持久化，刷新后保留
-        const frost = $('dlr-frost');
-        try {
-            const saved = GM_getValue('dlr_frost');
-            frost.checked = (saved === undefined || saved === null) ? true : !!saved;
-        } catch (e) {
-            frost.checked = true;
-        }
-        const applyFrost = () => {
-            panel.classList.toggle('frost', frost.checked);
-            try { GM_setValue('dlr_frost', frost.checked); } catch (e) {}
+        // 更多设置：可折叠，默认收起
+        const moreT = $('dlr-more-t'), moreB = $('dlr-more-b');
+        const setMore = (open) => {
+            moreT.setAttribute('aria-expanded', open ? 'true' : 'false');
+            moreB.classList.toggle('open', open);
         };
+        moreT.addEventListener('click', () =>
+            setMore(moreT.getAttribute('aria-expanded') !== 'true'));
+
+        // 持久化设置（thread/retry/prefetch/frost/stamp 共用一套读写）
+        const bindNum = (id, key, min, max, def) => {
+            const el = $(id);
+            try { const v = parseInt(GM_getValue(key), 10); if (v >= min && v <= max) el.value = v; }
+            catch (e) { el.value = def; }
+            el.addEventListener('change', () => {
+                const v = Math.max(min, Math.min(max, parseInt(el.value, 10) || def));
+                el.value = v;
+                try { GM_setValue(key, v); } catch (e) { }
+            });
+        };
+        const bindChk = (id, key, def) => {
+            const el = $(id);
+            try { const v = GM_getValue(key); el.checked = (v === undefined || v === null) ? def : !!v; }
+            catch (e) { el.checked = def; }
+            el.addEventListener('change', () => {
+                try { GM_setValue(key, el.checked); } catch (e) { }
+            });
+            return el;
+        };
+        bindNum('dlr-thread', 'dlr_thread', 1, 16, 5);
+        bindNum('dlr-retry', 'dlr_retry', 1, 10, 3);
+        bindChk('dlr-stamp', 'dlr_stamp', false);
+        const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
+
+        // 文件名 placeholder：留空时直接显示回放标题（预取完成后回填）
+        const nameInp = $('dlr-name');
+        const updateNameTip = () => {
+            if ((nameInp.value || '').trim()) return;   // 填了自定义名就不动 placeholder
+            const title = prepCache && prepCache.model ? prepCache.model.title : '';
+            nameInp.placeholder = title
+                ? title
+                : (prefetch.checked ? '回放标题解析中…' : '留空将使用回放标题');
+        };
+        nameInp.addEventListener('input', updateNameTip);
+        prefetch.addEventListener('change', updateNameTip);
+        window.__updateNameTip = updateNameTip;
+        updateNameTip();
+
+        // 毛玻璃：默认开启，开关状态持久化，刷新后保留
+        const frost = bindChk('dlr-frost', 'dlr_frost', true);
+        const applyFrost = () => panel.classList.toggle('frost', frost.checked);
         frost.addEventListener('change', applyFrost);
         applyFrost();
 
@@ -1202,7 +1274,22 @@
         try {
             const p = parseUrl(location.href);
             $('dlr-url').value = location.href;
-            setStatus('检测到直播 roomId=' + p.roomId + '  liveUuid=' + p.liveUuid.slice(0, 8) + '...。点击「下载本页回放」。');
+            setStatus('检测到回放 · roomId=' + p.roomId + ' · liveUuid=' + p.liveUuid.slice(0, 8) + '…');
+            // 预解析：检测到回放页且开关开启时，后台先跑 csrf/播放地址/m3u8，
+            // 点下载直接进入切片阶段。失败不打扰用户，状态栏提示即可。
+            if (prefetch.checked) {
+                setStatus('⏳ 正在预取播放地址与切片索引…');
+                prep(p.roomId, p.liveUuid).then(() => {
+                    if (window.__updateNameTip) window.__updateNameTip();
+                    setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
+                        ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
+                }).catch((e) => {
+                    setStatus('⚠ 预取失败：' + e.message + '（点击下载将重新获取）', true);
+                });
+            } else {
+                setStatus('检测到回放 · roomId=' + p.roomId +
+                    ' · liveUuid=' + p.liveUuid.slice(0, 8) + '… · 点击「下载本页回放」');
+            }
         } catch (e) {
             // 当前页不是直播详情页
         }
