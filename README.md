@@ -11,7 +11,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.6.5）
+## 功能（v1.6.6）
 
 **核心**
 
@@ -31,9 +31,13 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 **面板外观**
 
 - **毛玻璃**：默认开启。面板为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；不想模糊就取消勾选「毛玻璃」，状态持久化，刷新后保留。
-- **收缩为图标**：不看面板时点「收起」，缩成右下角一个小药丸图标，不挡画面；点图标展开，状态持久化。**下载进行中禁止收缩**，避免看不到进度。
-- **下载旋转光圈**：下载进行时，面板外右下角显示一个独立旋转的蓝色光圈；即使把面板收缩成图标，光圈仍可见，知道下载还在跑。
+- **收缩为图标**：不看面板时点「收起」，缩成右下角一个小药丸图标，不挡画面；点图标展开，状态持久化。**下载进行中禁止收缩**，避免看不到进度。收起/展开带弹簧缓出过渡动画，并尊重系统「减少动态效果」设置。
+- **下载光环**：下载进行时，整个面板最外层有一圈旋转的蓝色光环；收缩成药丸时光环同样包住，一眼知道下载还在跑。
 - **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼。
+
+**版本与更新**
+
+- 面板底部显示当前版本号，旁边「检查更新」按钮自动比对 GitHub 上的最新版本；发现新版时打开更新页。**GitHub 不通时自动回落到 Gitee 镜像**。
 
 **协议兼容**
 
@@ -47,13 +51,19 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 ## 安装
 
 1. 安装 [Tampermonkey（油猴）](https://www.tampermonkey.net/)。
-2. 打开下面的 Raw 地址即可触发安装页：
+2. 打开下面的 Raw 地址即可触发安装页（GitHub 与 Gitee 二选一）：
 
    ```
    https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
    ```
 
-   脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**。
+   国内访问慢可改用 Gitee 镜像：
+
+   ```
+   https://gitee.com/Vectg/dingtalk-live-replay-downloader/raw/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+   ```
+
+   脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**，或用面板内的「检查更新」按钮。
 
 3. 在 Edge / Chrome 还需到 `edge://extensions/`（或 `chrome://extensions/`）→ 篡改猴 → 详细信息，打开 **「允许用户脚本」**。此开关默认关闭时，油猴脚本一行都不会执行，右下角不会出现面板。
 

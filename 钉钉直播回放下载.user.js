@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.5
+// @version      1.6.6
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -30,6 +30,12 @@
     const INFO_URL = 'https://lv.dingtalk.com/getOpenLiveInfoV2';
     const REFERER = 'https://n.dingtalk.com/';
     const MUX_URL = 'https://cdn.jsdelivr.net/npm/mux.js@6.0.1/dist/mux.min.js';
+    const UPDATE_URL = 'https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js';
+    const UPDATE_URL_FALLBACK = 'https://gitee.com/Vectg/dingtalk-live-replay-downloader/raw/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js';
+    const VERSION = (() => {
+        try { return (GM_info && GM_info.script && GM_info.script.version) || '未知'; }
+        catch (e) { return '未知'; }
+    })();
 
     // ---------- 日志：面板挂载前的日志先缓存，避免静默丢失 ----------
     const logBuffer = [];
@@ -125,6 +131,19 @@
         let s = String(name || '').replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim();
         if (s.length > 120) s = s.slice(0, 120);
         return s || null;
+    }
+    // 语义化版本比较：a>b 返回 1，相等 0，a<b 返回 -1
+    function compareVersions(a, b) {
+        const pa = String(a || '0').split('.');
+        const pb = String(b || '0').split('.');
+        const len = Math.max(pa.length, pb.length);
+        for (let i = 0; i < len; i++) {
+            const na = parseInt(pa[i], 10) || 0;
+            const nb = parseInt(pb[i], 10) || 0;
+            if (na > nb) return 1;
+            if (na < nb) return -1;
+        }
+        return 0;
     }
     // 给一个非空兜底名（真正要用默认值时调用）
     function safeName(name, fallback) {
@@ -643,13 +662,32 @@
             font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
         #dlr-panel .foot a{color:#7d828d;text-decoration:none}
         #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
-        /* 界面外的旋转光圈：下载进行中显示，收缩态下也可见 */
-        #dlr-orbit{position:fixed;right:26px;bottom:26px;z-index:1000000;width:34px;height:34px;
-            border-radius:50%;border:3px solid rgba(61,110,255,.25);border-top-color:#3d6eff;
-            animation:dlrOrbit .8s linear infinite;display:none;pointer-events:none;
-            box-shadow:0 0 14px rgba(61,110,255,.4)}
-        #dlr-orbit.on{display:block}
-        @keyframes dlrOrbit{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        /* 下载中：整个面板最外层一圈旋转光环（收缩成药丸时同样包住） */
+        #dlr-panel{position:fixed}
+        #dlr-panel::before{content:'';position:absolute;inset:-3px;border-radius:14px;z-index:-1;
+            pointer-events:none;opacity:0;
+            background:conic-gradient(from 0deg,#3d6eff,transparent 25%,transparent 65%,#3d6eff);
+            animation:dlrRing 1.1s linear infinite}
+        #dlr-panel.mini::before{border-radius:999px}
+        #dlr-panel.dling::before{opacity:1}
+        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        /* 收起/展开过渡（取自动效规范：快速 150ms / 弹簧缓出 400ms） */
+        #dlr-panel{transition:width 280ms cubic-bezier(0.16,1,0.3,1),
+            padding 280ms cubic-bezier(0.16,1,0.3,1),
+            border-radius 280ms cubic-bezier(0.16,1,0.3,1),
+            background-color 200ms ease-out}
+        #dlr-panel.mini{width:50px !important}
+        #dlr-panel .collapse{transition:opacity 150ms ease-out}
+        #dlr-panel.mini .collapse{opacity:0}
+        /* 按压触觉反馈 */
+        #dlr-panel button:active{transform:scale(0.97)}
+        #dlr-panel button{transition:background-color 150ms cubic-bezier(0.4,0,0.2,1),
+            transform 150ms cubic-bezier(0.4,0,0.2,1),opacity 150ms ease-out}
+        /* 尊重系统「减少动态效果」 */
+        @media (prefers-reduced-motion:reduce){
+            #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
+            #dlr-panel::before{animation:none}
+        }
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
         #dlr-panel.frost{background:rgba(22,24,29,.72);-webkit-backdrop-filter:blur(14px) saturate(150%);
             backdrop-filter:blur(14px) saturate(150%);border-color:rgba(255,255,255,.09);
@@ -660,11 +698,6 @@
     `);
 
     const $ = (id) => document.getElementById(id);
-
-    // 界面外的旋转光圈：下载进行中显示，收缩态下也可见
-    const orbit = document.createElement('div');
-    orbit.id = 'dlr-orbit';
-    orbit.title = '正在下载…';
 
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
@@ -713,7 +746,12 @@
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
         <div id="dlr-status">就绪。</div>
         <div id="dlr-preview"></div>
-        <div class="foot">作者 <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a></div>
+        <div class="foot">
+            <span>v<span id="dlr-ver">--</span></span>
+            <span style="color:#3a3f4b">·</span>
+            <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
+            <button id="dlr-update" title="从 GitHub 拉取最新版">检查更新</button>
+        </div>
     `;
 
     function parseUrl(url) {
@@ -789,7 +827,7 @@
         p.querySelector('.bar').style.width = '0%';
         p.querySelector('.pct').textContent = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
-        if (orbit) orbit.classList.add('on');
+        panel.classList.add('dling');
     }
     function progressSet(pct, label) {
         const p = $('dlr-progress');
@@ -802,7 +840,7 @@
         const p = $('dlr-progress');
         const s = $('dlr-spin');
         if (s) s.style.display = 'none';
-        if (orbit) orbit.classList.remove('on');
+        panel.classList.remove('dling');
         if (!p) return;
         if (ok) {
             progressSet(100, '完成');
@@ -958,8 +996,6 @@
 
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
-        // 光圈必须挂在面板之前，#dlr-panel.mini ~ #dlr-orbit 兄弟选择器才生效
-        document.body.appendChild(orbit);
         document.body.appendChild(panel);
         statusEl = $('dlr-status');
         // 面板挂载前缓存的日志：单行模式只回放最后一条
@@ -983,6 +1019,48 @@
         frost.addEventListener('change', applyFrost);
         applyFrost();
 
+        // 版本号回填 + 检查更新（GitHub 不通时回落 Gitee）
+        $('dlr-ver').textContent = VERSION;
+        const upd = $('dlr-update');
+        upd.addEventListener('click', async () => {
+            const oldText = upd.textContent;
+            upd.disabled = true;
+            upd.textContent = '检查中…';
+            const fetchVer = (url) => new Promise((res, rej) => {
+                GM_xmlhttpRequest({
+                    url, method: 'GET',
+                    onload: (r) => (r.status >= 200 && r.status < 300) ? res(r.responseText) : rej(new Error('HTTP ' + r.status)),
+                    onerror: () => rej(new Error('网络错误')),
+                    ontimeout: () => rej(new Error('超时')),
+                });
+            });
+            try {
+                let txt;
+                try {
+                    txt = await fetchVer(UPDATE_URL);
+                } catch (e1) {
+                    appendLog('GitHub 不通，回落 Gitee');
+                    txt = await fetchVer(UPDATE_URL_FALLBACK);
+                }
+                const m = txt.match(/@version\s+(\S+)/);
+                if (!m) throw new Error('无法解析远程版本号');
+                if (compareVersions(m[1], VERSION) > 0) {
+                    setStatus('🔄 发现新版 ' + m[1] + '（当前 ' + VERSION + '），已打开更新页');
+                    window.open(UPDATE_URL, '_blank');
+                    upd.textContent = '已打开更新页';
+                } else {
+                    setStatus('✅ 已是最新版 v' + VERSION);
+                    upd.textContent = '最新';
+                }
+            } catch (e) {
+                setStatus('❌ 检查更新失败：' + e.message, true);
+                upd.textContent = '失败';
+            } finally {
+                upd.disabled = false;
+                setTimeout(() => { upd.textContent = oldText; }, 2600);
+            }
+        });
+
         // 收缩 / 展开：不用时缩成一个小图标，状态持久化
         const applyMini = () => panel.classList.toggle('mini', miniState);
         let miniState = false;
@@ -994,11 +1072,6 @@
             miniState = v;
             try { GM_setValue('dlr_mini', v); } catch (e) {}
             applyMini();
-            // 收缩态把光圈挪到药丸左上方，避免和图标重叠
-            if (orbit) {
-                orbit.style.right = v ? '60px' : '';
-                orbit.style.bottom = v ? '52px' : '';
-            }
         };
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
