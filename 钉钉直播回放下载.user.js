@@ -597,15 +597,23 @@
             transition:width 260ms cubic-bezier(0.16,1,0.3,1),
                 padding 260ms cubic-bezier(0.16,1,0.3,1),
                 border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
-        /* 下载中：整个面板最外层一圈旋转光环（收缩成药丸时同样包住） */
-        #dlr-ring{position:absolute;left:-4px;top:-4px;right:-4px;bottom:-4px;
-            border-radius:16px;pointer-events:none;opacity:0;z-index:0;
-            background:conic-gradient(from 0deg,#3d6eff,transparent 25%,transparent 65%,#3d6eff);
-            animation:dlrRing 1.1s linear infinite;
-            transition:opacity 200ms ease-out, border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+        /* 下载中：整个面板最外层一圈旋转描边光环。
+           关键：必须置于最上层，且只画空心描边，否则半透明毛玻璃
+           会把实心光环从面板内部透出来，糊成大色块（用户截图佐证）。
+           inset:0 与面板完全重合；::after 是真正的描边层，用 transform
+           旋转（GPU 合成），描边始终是闭合环，不会出现斜边。 */
+        #dlr-ring{position:absolute;inset:0;pointer-events:none;opacity:0;z-index:2;
+            border-radius:inherit;overflow:visible;
+            transition:opacity 200ms ease-out}
+        #dlr-ring::after{content:'';position:absolute;inset:0;border-radius:inherit;
+            border:3px solid transparent;
+            background:conic-gradient(from 0deg,#3d6eff,transparent 25%,transparent 70%,#3d6eff)
+                border-box;
+            -webkit-background-clip:border-box;background-clip:border-box;
+            animation:dlrRing 1.1s linear infinite}
+        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         #dlr-ring.on{opacity:1}
         #dlr-panel.mini #dlr-ring{border-radius:999px}
-        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         #dlr-panel .body{display:block;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
