@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.7.2
+// @version      1.8.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -400,7 +400,7 @@
         return out;
     }
 
-    async function fetchAndParseM3u8(url, depth = 0) {
+    async function fetchAndParseM3u8(url, depth = 0, wantRes = '') {
         if (depth > 5) throw new Error('m3u8 嵌套层级过多');
         const text = await getText(url, '');
         const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -412,6 +412,7 @@
         let pending = null;
         let pendingRange = null;     // #EXT-X-BYTERANGE
         let pendingDur = 0;          // 当前 #EXTINF 时长
+        let pendingRes = '';         // #EXT-X-STREAM-INF 的 RESOLUTION
         let segClock = 0;            // 时间轴：当前切片的起始时间（秒）
         let mediaSequence = 0;
 
@@ -429,6 +430,7 @@
             if (line.startsWith('#EXT-X-STREAM-INF:')) {
                 const attrs = parseAttributes(line.slice('#EXT-X-STREAM-INF:'.length));
                 pending = parseInt(attrs.BANDWIDTH || '0', 10) || 0;
+                pendingRes = String(attrs.RESOLUTION || '');
                 continue;
             }
             if (line.startsWith('#EXT-X-MAP:')) {
@@ -457,8 +459,9 @@
             if (!line.startsWith('#')) {
                 const u = resolveUrl(url, line);
                 if (pending !== null) {
-                    variants.push({ url: u, bandwidth: pending });
+                    variants.push({ url: u, bandwidth: pending, res: pendingRes });
                     pending = null;
+                    pendingRes = '';
                 } else {
                     const segStart = segClock;
                     segments.push({
@@ -479,8 +482,18 @@
 
         if (variants.length) {
             variants.sort((a, b) => b.bandwidth - a.bandwidth);
-            appendLog('   多码率，选择最高带宽 ' + variants[0].bandwidth + ' bps');
-            return fetchAndParseM3u8(variants[0].url, depth + 1);
+            // 按用户选择的分辨率挑变体；未选（自动）时取最高带宽 = 原始分辨率
+            let pick = variants[0];
+            if (wantRes) {
+                const hit = variants.find((v) => v.res === wantRes);
+                if (hit) pick = hit;
+                else appendLog('   找不到分辨率 ' + wantRes + '，回落最高带宽 ' + pick.bandwidth + ' bps');
+            }
+            appendLog('   多码率 ' + variants.length + ' 档，选择 ' +
+                (pick.res || '未标注分辨率') + ' · ' + pick.bandwidth + ' bps');
+            const inner = await fetchAndParseM3u8(pick.url, depth + 1, '');
+            inner.variants = variants;   // 供分辨率下拉框填充
+            return inner;
         }
         if (!segments.length) throw new Error('m3u8 无切片');
 
@@ -498,31 +511,61 @@
             fmp4: looksFmp4,
             initSegment: withMap ? withMap.map : null,
             totalDur,
+            variants: [],
         };
     }
 
     // ---------- 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确） ----------
-    function parseTimeArg(v) {
-        const s = String(v || '').trim();
+    function parseTimeArg(v, label) {
+        let s = String(v == null ? '' : v);
+        // 自动修复常见输入问题：中文/全角冒号 → 半角，全角数字 → 半角，去空白与零宽字符
+        s = s.replace(/[：︰﹕]/g, ':');
+        s = s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+        s = s.replace(/[\s\u200b\u200c\u200d\ufeff]/g, '');
         if (!s) return null;
-        if (!/^[0-9:.]+$/.test(s)) throw new Error('时间格式应为 mm:ss 或 hh:mm:ss');
-        const p = s.split(':').map((x) => parseInt(x, 10) || 0);
-        if (p.length === 1) return p[0];
-        if (p.length === 2) return p[0] * 60 + p[1];
-        return p[0] * 3600 + p[1] * 60 + p[2];
+        const who = label || '时间';
+        if (!/^[0-9:.]+$/.test(s)) {
+            throw new Error(who + '含非法字符，只接受数字与冒号（例：12:34 或 1:02:03），收到：' + v);
+        }
+        const p = s.split(':');
+        if (p.length > 3) throw new Error(who + '最多 hh:mm:ss 两层冒号：' + v);
+        if (p.some((x) => x === '')) throw new Error(who + '冒号不能连写或出现在两端：' + v);
+        const n = p.map((x) => parseInt(x, 10));
+        if (n.some((x) => !isFinite(x) || x < 0)) throw new Error(who + '必须为非负整数：' + v);
+        // 秒位必须 ≤59；三位时分钟位也必须 ≤59（两位时首位是分钟，可超过 59，如 90:00）
+        const ss = n[n.length - 1];
+        if (ss > 59) throw new Error(who + '的秒位不能超过 59（得到 ' + ss + '），可用 ' + fmtTime(n.length === 1 ? n[0] : (n.length === 2 ? n[0] * 60 + ss : n[0] * 3600 + n[1] * 60 + ss)) + ' 表示：' + v);
+        if (n.length === 3 && n[1] > 59) throw new Error(who + '的分钟位不能超过 59：' + v);
+        if (n.length === 1) return n[0];
+        if (n.length === 2) return n[0] * 60 + ss;
+        return n[0] * 3600 + n[1] * 60 + ss;
     }
 
     function clipSegments(segs, from, to) {
         if (from === null && to === null) return { segs, range: null };
-        const fromS = from === null ? -Infinity : from;
-        const toS = to === null ? Infinity : to;
-        if (toS <= fromS) throw new Error('结束时间需晚于开始时间');
+        const fullDur = segs.length
+            ? segs[segs.length - 1].start + (segs[segs.length - 1].dur || 0)
+            : 0;
+        if (from !== null && from < 0) throw new Error('开始时间不能为负');
+        if (to !== null && to < 0) throw new Error('结束时间不能为负');
+        if (from !== null && to !== null && to <= from) {
+            throw new Error('结束时间需晚于开始时间（开始 ' + fmtTime(from) +
+                ' ≥ 结束 ' + fmtTime(to) + '）');
+        }
+        let fromS = from === null ? -Infinity : from;
+        let toS = to === null ? Infinity : to;
+        // 超出回放总时长：自动截到末尾（自动修复，不报错）
+        let clamped = false;
+        if (toS > fullDur) { toS = fullDur; clamped = true; }
+        if (fromS !== -Infinity && fromS >= fullDur) {
+            throw new Error('开始时间 ' + fmtTime(from) + ' 超出回放总时长 ' + fmtTime(fullDur));
+        }
         // 与区间有交集的切片都保留
         const kept = segs.filter((s) => (s.start + (s.dur || 0)) > fromS && s.start < toS);
-        if (!kept.length) throw new Error('所选时间段内没有切片（回放时长可能不足）');
+        if (!kept.length) throw new Error('所选时间段内没有切片（回放总时长 ' + fmtTime(fullDur) + '）');
         return {
             segs: kept,
-            range: { from: fromS, to: toS, first: kept[0].start, last: kept[kept.length - 1].start + (kept[kept.length - 1].dur || 0) },
+            range: { from: fromS, to: toS, first: kept[0].start, last: kept[kept.length - 1].start + (kept[kept.length - 1].dur || 0), clamped },
         };
     }
 
@@ -653,8 +696,8 @@
         @keyframes dlrSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
         #dlr-spin{display:none;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:dlrSpin .8s linear infinite;vertical-align:-2px;margin-right:6px}
         #dlr-status{margin-top:8px;padding:6px 8px;background:#0f1115;border:1px solid #23262e;border-radius:6px;
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#aeb3bd;
-            display:flex;align-items:center;min-height:28px}
+            white-space:normal;overflow-wrap:anywhere;font-size:12px;color:#aeb3bd;
+            min-height:28px;line-height:1.5}
         #dlr-panel .err{color:#ff7a7a}
         #dlr-preview{display:none;margin-top:10px;border-top:1px solid #23262e;padding-top:10px}
         #dlr-preview .ph{position:relative;background:#000;border-radius:8px;overflow:hidden}
@@ -669,34 +712,45 @@
             font-size:12px;color:#9aa0ab;cursor:pointer;user-select:none;
             padding:2px 0;transition:color 150ms cubic-bezier(0.4,0,0.2,1)}
         #dlr-panel .more-toggle:hover{color:#d7d9de}
-        #dlr-panel .mt-ic{display:inline-block;transition:transform 220ms cubic-bezier(0.16,1,0.3,1);
-            font-size:14px;line-height:1;transform:rotate(90deg);color:#6d727c}
-        #dlr-panel .more-toggle[aria-expanded="true"] .mt-ic{transform:rotate(270deg);color:#3d6eff}
+        #dlr-panel .mt-ic{display:inline-block;width:6px;height:6px;box-sizing:border-box;
+            border-right:2px solid #6d727c;border-bottom:2px solid #6d727c;
+            transform:rotate(-45deg);
+            transition:transform 260ms cubic-bezier(0.16,1,0.3,1),border-color 150ms ease}
+        #dlr-panel .more-toggle[aria-expanded="true"] .mt-ic{transform:rotate(45deg);border-color:#3d6eff}
         #dlr-panel .more-body{display:grid;grid-template-rows:0fr;
             transition:grid-template-rows 260ms cubic-bezier(0.16,1,0.3,1),
                 opacity 200ms cubic-bezier(0.4,0,0.2,1);opacity:0}
         #dlr-panel .more-body>div{overflow:hidden;min-height:0}
         #dlr-panel .more-body.open{grid-template-rows:1fr;opacity:1}
         #dlr-panel .more-body .row:first-child{margin-top:6px}
-        /* 收缩态：只显示一个小药丸图标（宽度 50px 为定值，可与展开态 392px 直接补间） */
-        #dlr-panel.mini{width:50px;padding:0;border-radius:999px}
-        #dlr-panel.mini .body{width:50px;border-radius:999px;
+        /* 收缩态：横向长条——上面是名字，下面是进度条（解析蓝 / 下载绿） */
+        #dlr-panel.mini{width:230px;padding:0;border-radius:12px}
+        #dlr-panel.mini .body{width:230px;border-radius:12px;
             background:rgba(22,24,29,.85);
             grid-template-rows:0fr;opacity:0;padding:0;border-width:0;pointer-events:none}
-        #dlr-panel.mini .expand{padding:8px 13px;font-size:12px}
-        #dlr-panel.mini .expand .lb{display:none}
         #dlr-panel.mini.frost .body{background:rgba(22,24,29,.55)}
-        /* 展开态：默认隐藏展开按钮 */
-        #dlr-panel .expand{display:none;align-items:center;gap:7px;cursor:pointer;
-            padding:8px 14px;color:#d7d9de;font-size:12px;user-select:none;
+        #dlr-panel.mini .collapse{opacity:0}
+        /* 展开态：默认隐藏收缩条 */
+        #dlr-panel .expand{display:none;flex-direction:column;gap:7px;cursor:pointer;
+            padding:9px 12px;color:#d7d9de;font-size:12px;user-select:none;
+            background:rgba(22,24,29,.92);border-radius:12px;
             opacity:0;transition:opacity 200ms ease-out}
-        #dlr-panel .expand .ic{width:22px;height:22px;border-radius:50%;background:#3d6eff;
+        #dlr-panel .expand .ex-row{display:flex;align-items:center;gap:7px;min-width:0}
+        #dlr-panel .expand .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;
+            text-overflow:ellipsis;font-weight:600;letter-spacing:.2px}
+        #dlr-panel .expand .ic{width:18px;height:18px;border-radius:50%;background:#3d6eff;
             color:#fff;display:flex;align-items:center;justify-content:center;
-            font-size:12px;font-weight:700;flex:none}
+            font-size:10px;font-weight:700;flex:none}
+        /* 收缩条进度：默认蓝（解析阶段），下载阶段转绿 */
+        #dlr-panel .expand .ex-track{height:4px;border-radius:2px;overflow:hidden;
+            background:rgba(255,255,255,.1)}
+        #dlr-panel .expand .ex-bar{height:100%;width:0%;border-radius:2px;
+            background:#3d6eff;transition:width .25s ease,background-color .3s ease}
+        #dlr-panel .expand.dl .ex-bar{background:#22c55e}
         #dlr-panel .expand:hover{background:rgba(255,255,255,.05)}
-        #dlr-panel.mini .expand{display:flex}
-        /* 收缩态：展开按钮淡入，内容淡出 */
-        #dlr-panel.mini .expand{opacity:1}
+        #dlr-panel.mini .expand{display:flex;opacity:1}
+        #dlr-panel.mini .expand:hover .ic{transform:scale(1.12)}
+        #dlr-panel.mini .expand .ic{transition:transform 220ms cubic-bezier(0.16,1,0.3,1)}
         /* 收缩态内容淡出 + 高度折叠（单一过渡曲线，宽高同步，避免内容硬塌） */
         /* 收缩按钮（展开态右上角） */
         #dlr-panel .collapse{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.06);
@@ -738,7 +792,10 @@
     // 注意：不要给 panel 设 position:relative 内联样式——会覆盖 CSS 的 position:fixed，
     // 导致面板掉进文档流（跑到页面左下角）。position:fixed 本身已足以作为收缩按钮的定位参照。
     panel.innerHTML = `
-        <div class="expand" title="展开面板"><span class="ic">⬇</span><span class="lb">钉钉直播回放下载</span></div>
+        <div class="expand" id="dlr-exp" title="点击展开面板">
+            <div class="ex-row"><span class="ic">⬇</span><span class="lb" id="dlr-ex-title">钉钉直播回放下载</span></div>
+            <div class="ex-track"><div class="ex-bar" id="dlr-ex-bar"></div></div>
+        </div>
         <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
         <div class="bin">
@@ -761,6 +818,10 @@
                 </select>
             </div>
             <div class="row">
+                <label>分辨率</label>
+                <select id="dlr-res" style="flex:1"><option value="">自动（原始分辨率）</option></select>
+            </div>
+            <div class="row">
                 <label>截取</label>
                 <input type="text" id="dlr-from" placeholder="开始 mm:ss" style="width:96px">
                 <label style="min-width:16px">至</label>
@@ -771,15 +832,27 @@
         <div class="sec"><div class="row"><button id="dlr-go" class="primary"><span id="dlr-spin"></span>下载本页回放</button></div></div>
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
         <div id="dlr-status">就绪。</div>
+        <div id="dlr-ctl" class="row" style="display:none">
+            <button id="dlr-pause" title="暂停/继续下载">⏸ 暂停</button>
+            <button id="dlr-cancel" title="中断本次下载（已下载的可保留）">⏹ 中断</button>
+            <button id="dlr-purge" title="删除全部已下载的切片缓存">🗑 删除已下载</button>
+        </div>
         <div id="dlr-preview"></div>
         <div class="sec">
-            <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic">›</span></div>
+            <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
             <div class="more-body" id="dlr-more-b"><div>
                 <div class="row">
                     <label>并发线程</label>
                     <input type="number" id="dlr-thread" min="1" max="16" value="5">
                     <label style="min-width:48px">重试</label>
                     <input type="number" id="dlr-retry" min="1" max="10" value="3">
+                </div>
+                <div class="row">
+                    <label>面板状态</label>
+                    <select id="dlr-mini-def" style="flex:1">
+                        <option value="0" selected>默认展开</option>
+                        <option value="1">默认收缩</option>
+                    </select>
                 </div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label></div>
@@ -789,6 +862,7 @@
         <div class="foot">
             <span>v<span id="dlr-ver">--</span></span>
             <span style="color:#3a3f4b">·</span>
+            <span>By</span>
             <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
             <button id="dlr-update" title="从 GitHub 拉取最新版">检查更新</button>
         </div>
@@ -863,14 +937,22 @@
     // ---------- 进度条 ----------
     function progressReset() {
         const p = $('dlr-progress');
+        const exp = $('dlr-exp');
+        if (exp) exp.classList.remove('dl');   // 起始为解析阶段：蓝
         if (!p) return;
         p.classList.add('on');
         p.classList.remove('done');
         p.querySelector('.bar').style.width = '0%';
         p.querySelector('.pct').textContent = '0%';
+        const xb = $('dlr-ex-bar'); if (xb) xb.style.width = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
         panel.classList.add('dling');
         if (window.__ringShow) try { window.__ringShow(); } catch (e) {}
+    }
+    // phase: 'parse'(蓝) | 'download'(绿) —— 同步收缩条的颜色
+    function setPhase(phase) {
+        const exp = $('dlr-exp');
+        if (exp) exp.classList.toggle('dl', phase === 'download');
     }
     function progressSet(pct, label) {
         const p = $('dlr-progress');
@@ -878,6 +960,8 @@
         const v = Math.max(0, Math.min(100, Math.round(pct)));
         p.querySelector('.bar').style.width = v + '%';
         p.querySelector('.pct').textContent = label ? (label + ' ' + v + '%') : (v + '%');
+        const xb = $('dlr-ex-bar');
+        if (xb) xb.style.width = v + '%';   // 收缩条进度同步
     }
     function progressDone(ok) {
         const p = $('dlr-progress');
@@ -898,8 +982,9 @@
     // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
     let prepCache = null;      // {key, at, token, model, parsed}
     const PREP_TTL = 10 * 60 * 1000;
-    async function prep(roomId, liveUuid) {
-        const key = roomId + '|' + liveUuid;
+    async function prep(roomId, liveUuid, wantRes) {
+        wantRes = wantRes || '';
+        const key = roomId + '|' + liveUuid + '|' + wantRes;
         const fresh = prepCache && prepCache.key === key &&
             (Date.now() - prepCache.at) < PREP_TTL;
         if (fresh) return prepCache;
@@ -911,7 +996,7 @@
         appendLog('   标题: ' + model.title +
             '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知'));
         appendLog('③ 拉取 m3u8 ...');
-        const parsed = await fetchAndParseM3u8(model.playbackUrl);
+        const parsed = await fetchAndParseM3u8(model.playbackUrl, 0, wantRes);
         if (parsed.totalDur) {
             appendLog('   回放总时长 ' + fmtTime(parsed.totalDur) +
                 '（' + parsed.segments.length + ' 个切片）');
@@ -927,7 +1012,7 @@
         // 各阶段在整条进度条上的落点：切片下载占 5%~92%，其余为准备/转封装/保存
         const P = { prep: 5, dlStart: 5, dlEnd: 92, mux: 96, save: 99 };
         try {
-            const { model, parsed } = await prep(roomId, liveUuid);
+            const { model, parsed } = await prep(roomId, liveUuid, opts.res);
             // 留空 = 用回放标题；填了则优先，并自动去掉误带的后缀
             const autoName = safeName(model.title, liveUuid);
             const baseName = safeName(opts.name, autoName);
@@ -940,7 +1025,8 @@
             if (clip.range) {
                 appendLog('   ✂ 截取 ' + fmtTime(clip.range.from) + ' ~ ' + fmtTime(clip.range.to) +
                     ' → 实际 ' + fmtTime(clip.range.first) + ' ~ ' + fmtTime(clip.range.last) +
-                    '（' + segs.length + '/' + parsed.segments.length + ' 切片）');
+                    '（' + segs.length + '/' + parsed.segments.length + ' 切片）' +
+                    (clip.range.clamped ? '；结束时间超出总时长，已自动截到回放末尾' : ''));
             }
 
             // fMP4：init + 分片本身就是合法 MP4，不需要 mux.js，输出必须是 .mp4
@@ -956,6 +1042,7 @@
                 (parsed.encrypted ? '   AES-128 加密' : '') +
                 (parsed.fmp4 ? '   fMP4' : '   TS'));
             progressSet(P.dlStart, '下载');
+            setPhase('download');   // 进入下载阶段：收缩条转绿
 
             appendLog('④ 下载切片（并发 ' + opts.threads + '，重试 ' + opts.retry + '）...');
             const datas = new Array(segs.length);
@@ -1154,22 +1241,64 @@
         bindChk('dlr-stamp', 'dlr_stamp', false);
         const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
 
-        // 文件名 placeholder：留空时直接显示回放标题（预取完成后回填）
+        // 分辨率：默认自动（原始=最高带宽）；预取后回填各档位，切换即重新预取
+        const resSel = $('dlr-res');
+        try { const rv = GM_getValue('dlr_res'); if (rv) resSel.value = rv; } catch (e) { }
+        const fillResOptions = (variants) => {
+            if (!resSel || !variants || variants.length < 2) return;
+            const cur = resSel.value;
+            resSel.innerHTML = '<option value="">自动（原始分辨率）</option>';
+            variants.forEach((v) => {
+                if (!v.res) return;
+                const o = document.createElement('option');
+                o.value = v.res;
+                o.textContent = v.res + ' · ' + Math.round(v.bandwidth / 1000) + ' kbps';
+                resSel.appendChild(o);
+            });
+            resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
+        };
+        resSel.addEventListener('change', () => {
+            try { GM_setValue('dlr_res', resSel.value); } catch (e) { }
+            // 切换分辨率 → 缓存键不同，直接重新预取，下载时秒用
+            let p = null;
+            try { p = parseUrl(($('dlr-url').value || '').trim() || location.href); } catch (e) { }
+            if (p && prefetch.checked) {
+                setStatus('⏳ 已切换分辨率，重新预取…');
+                prep(p.roomId, p.liveUuid, resSel.value).then(() => {
+                    if (window.__updateNameTip) window.__updateNameTip();
+                    if (fillResOptions) fillResOptions(prepCache.parsed.variants);
+                    setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
+                        ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
+                }).catch((e) => setStatus('⚠ 预取失败：' + e.message, true));
+            }
+        });
+
+        // 文件名 placeholder：留空时直接显示回放标题（预取完成后回填）；
+        // 勾选「加时间戳」时追加 _时间戳，且每秒自动刷新保持最新
         const nameInp = $('dlr-name');
+        const stampChk = $('dlr-stamp');
         const updateNameTip = () => {
             if ((nameInp.value || '').trim()) return;   // 填了自定义名就不动 placeholder
             const title = prepCache && prepCache.model ? prepCache.model.title : '';
-            nameInp.placeholder = title
+            let ph = title
                 ? title
                 : (prefetch.checked ? '回放标题解析中…' : '留空将使用回放标题');
+            if (stampChk && stampChk.checked && title) ph += '_' + stamp();
+            nameInp.placeholder = ph;
         };
         nameInp.addEventListener('input', updateNameTip);
         prefetch.addEventListener('change', updateNameTip);
+        if (stampChk) stampChk.addEventListener('change', updateNameTip);
         window.__updateNameTip = updateNameTip;
         updateNameTip();
+        // 时间戳每秒自动刷新（仅在勾选时间戳且未填自定义名时生效）
+        setInterval(() => {
+            if (stampChk && stampChk.checked &&
+                !(nameInp.value || '').trim() && prepCache) updateNameTip();
+        }, 1000);
 
         // 毛玻璃：默认开启，开关状态持久化，刷新后保留
-        const frost = bindChk('dlr-frost', 'dlr_frost', true);
+        const frost = bindChk('dlr-frost', 'dlr_frost', false);   // 毛玻璃：默认关闭
         const applyFrost = () => panel.classList.toggle('frost', frost.checked);
         frost.addEventListener('change', applyFrost);
         applyFrost();
@@ -1221,25 +1350,39 @@
         const applyMini = () => panel.classList.toggle('mini', miniState);
         let miniState = false;
         try {
-            const saved = GM_getValue('dlr_mini');
-            miniState = !(saved === undefined || saved === null) && !!saved;
+            // 优先读「默认面板状态」选项；老用户保留 dlr_mini 兼容
+            const def = GM_getValue('dlr_mini_def');
+            if (def === '1' || def === '0') miniState = def === '1';
+            else {
+                const saved = GM_getValue('dlr_mini');
+                miniState = !(saved === undefined || saved === null) && !!saved;
+            }
         } catch (e) {}
         const setMini = (v) => {
             miniState = v;
-            try { GM_setValue('dlr_mini', v); } catch (e) {}
+            try { GM_setValue('dlr_mini', v); } catch (e) { }
+            // 手动收起/展开同步为下次打开的默认状态
+            if (miniDef) {
+                miniDef.value = v ? '1' : '0';
+                try { GM_setValue('dlr_mini_def', miniDef.value); } catch (e) { }
+            }
             applyMini();
             // 光环跟随面板尺寸/圆角变化（收缩时 rx 要变大成药丸）
             if (typeof syncRing === 'function') syncRing();
         };
+        // 默认展开/收缩：决定下次打开页面时的初始状态；手动收起/展开也会同步该选项
+        const miniDef = $('dlr-mini-def');
+        try { miniDef.value = GM_getValue('dlr_mini_def') === '1' ? '1' : '0'; } catch (e) { }
+        miniDef.addEventListener('change', () => {
+            try { GM_setValue('dlr_mini_def', miniDef.value); } catch (e) { }
+            try { GM_setValue('dlr_mini', miniDef.value === '1'); } catch (e) { }
+        });
+
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
         exp.addEventListener('click', () => setMini(false));
         col.addEventListener('click', () => {
-            // 下载进行中不允许收缩，避免看不到进度
-            if ($('dlr-go').disabled) {
-                setStatus('⏳ 下载进行中，请先完成或失败后再收起面板。', true);
-                return;
-            }
+            // 收缩后收缩条仍显示实时进度（标题+进度条），因此不再禁止下载中收起
             setMini(true);
         });
         applyMini();
@@ -1248,10 +1391,10 @@
             const raw = ($('dlr-url').value || '').trim() || location.href;
             let clipFrom = null, clipTo = null;
             try {
-                clipFrom = parseTimeArg($('dlr-from').value);
-                clipTo = parseTimeArg($('dlr-to').value);
+                clipFrom = parseTimeArg($('dlr-from').value, '开始时间');
+                clipTo = parseTimeArg($('dlr-to').value, '结束时间');
             } catch (e) {
-                setStatus('❌ 截取时间格式错误：' + e.message, true);
+                setStatus('❌ 截取时间错误：' + e.message, true);
                 return;
             }
             const opts = {
@@ -1262,6 +1405,7 @@
                 clipFrom,
                 clipTo,
                 name: ($('dlr-name').value || '').trim(),
+                res: $('dlr-res') ? $('dlr-res').value : '',
             };
             try {
                 const { roomId, liveUuid } = parseUrl(raw);
@@ -1279,8 +1423,9 @@
             // 点下载直接进入切片阶段。失败不打扰用户，状态栏提示即可。
             if (prefetch.checked) {
                 setStatus('⏳ 正在预取播放地址与切片索引…');
-                prep(p.roomId, p.liveUuid).then(() => {
+                prep(p.roomId, p.liveUuid, resSel.value).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
+                    if (fillResOptions) fillResOptions(prepCache.parsed.variants);
                     setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
                         ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
                 }).catch((e) => {
