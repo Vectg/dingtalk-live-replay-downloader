@@ -648,7 +648,8 @@
 
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
-    panel.style.position = 'relative';   // 供收缩按钮绝对定位
+    // 注意：不要给 panel 设 position:relative 内联样式——会覆盖 CSS 的 position:fixed，
+    // 导致面板掉进文档流（跑到页面左下角）。position:fixed 本身已足以作为收缩按钮的定位参照。
     panel.innerHTML = `
         <div class="expand" title="展开面板"><span class="ic">⬇</span><span class="lb">钉钉直播回放下载</span></div>
         <button class="collapse" title="收缩为图标">收起</button>
