@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.2.0
+// @version      1.3.0
 // @description  通过公开接口获取钉钉直播回放 m3u8，下载全部切片，支持 TS 拼接 / MP4 转封装、多码率 m3u8、AES-128 解密、并发数与重试次数。无需登录。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
-// @require      https://cdn.jsdelivr.net/npm/mux.js@6.0.1/dist/mux.min.js
+// @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // @grant        GM_addStyle
@@ -23,6 +23,7 @@
     const CSRF_URL = 'https://lv.dingtalk.com/csrf';
     const INFO_URL = 'https://lv.dingtalk.com/getOpenLiveInfoV2';
     const REFERER = 'https://n.dingtalk.com/';
+    const MUX_URL = 'https://cdn.jsdelivr.net/npm/mux.js@6.0.1/dist/mux.min.js';
 
     // ---------- GM 请求封装 ----------
     function gmx(opt) {
@@ -114,12 +115,22 @@
         });
     }
 
-    // 用 mux.js（@require 已在脚本沙箱内可用）把 TS 切片转封装为 fMP4；失败抛错由调用方回退。
-    function remuxToMp4(tsArray) {
-        if (typeof muxjs === 'undefined' || !muxjs.mp4) {
-            throw new Error('mux.js 未加载');
-        }
-        const transmuxer = new muxjs.mp4.Transmuxer();
+    // ---------- mux.js 懒加载（不再 @require，避免启动依赖外部 CDN） ----------
+    let muxGlobal = null;
+    async function loadMux() {
+        if (muxGlobal) return muxGlobal;
+        // 页面已存在则直接复用
+        if (window.muxjs && window.muxjs.mp4) { muxGlobal = window.muxjs; return muxGlobal; }
+        const src = await getText(MUX_URL, '');
+        // 在沙箱内求值，mux.js 会把 muxjs 挂到全局
+        new Function(src)();
+        muxGlobal = window.muxjs || (typeof muxjs !== 'undefined' ? muxjs : undefined) || null;
+        if (!muxGlobal || !muxGlobal.mp4) throw new Error('mux.js 加载失败');
+        return muxGlobal;
+    }
+    async function remuxToMp4(tsArray) {
+        const mux = await loadMux();
+        const transmuxer = new mux.mp4.Transmuxer();
         let init = null;
         const frags = [];
         transmuxer.on('data', (segment) => {
@@ -158,7 +169,7 @@
         const variants = [];
         const segments = [];
         let currentKey = null;
-        let pending = null;      // 待解析的 STREAM-INF 带宽
+        let pending = null;
         let mediaSequence = 0;
 
         for (let i = 0; i < lines.length; i++) {
@@ -261,6 +272,18 @@
         #dlr-panel .err{color:#c00}
     `);
 
+    const $ = (id) => document.getElementById(id);
+    let statusEl = null;
+    function log(msg, isErr) {
+        if (!statusEl) return;
+        statusEl.innerHTML = (isErr ? '<span class="err">' : '') + String(msg).replace(/</g, '&lt;') + (isErr ? '</span>' : '');
+    }
+    function appendLog(msg) {
+        if (!statusEl) return;
+        statusEl.textContent += '\n' + msg;
+        statusEl.scrollTop = statusEl.scrollHeight;
+    }
+
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
     panel.innerHTML = `
@@ -282,17 +305,6 @@
         <div class="row"><button id="dlr-go">下载本页回放</button></div>
         <div id="dlr-status">就绪。</div>
     `;
-    document.body.appendChild(panel);
-
-    const $ = (id) => document.getElementById(id);
-    const statusEl = $('dlr-status');
-    function log(msg, isErr) {
-        statusEl.innerHTML = (isErr ? '<span class="err">' : '') + String(msg).replace(/</g, '&lt;') + (isErr ? '</span>' : '');
-    }
-    function appendLog(msg) {
-        statusEl.textContent += '\n' + msg;
-        statusEl.scrollTop = statusEl.scrollHeight;
-    }
 
     function parseUrl(url) {
         let u;
@@ -353,7 +365,7 @@
             let blob, note = '';
             if (wantMp4) {
                 try {
-                    blob = remuxToMp4(datas);
+                    blob = await remuxToMp4(datas);
                     appendLog('   MP4 转封装成功');
                 } catch (e) {
                     note = '（MP4 转封装失败，已回退为 TS：' + e.message + '）';
@@ -376,26 +388,39 @@
         }
     }
 
-    $('dlr-go').addEventListener('click', () => {
-        const raw = ($('dlr-url').value || '').trim() || location.href;
-        const opts = {
-            fmt: $('dlr-fmt').value,
-            threads: Math.max(1, Math.min(16, parseInt($('dlr-thread').value, 10) || 5)),
-            retry: Math.max(1, Math.min(10, parseInt($('dlr-retry').value, 10) || 3)),
-        };
-        try {
-            const { roomId, liveUuid } = parseUrl(raw);
-            run(roomId, liveUuid, opts);
-        } catch (e) {
-            log('❌ ' + e.message, true);
-        }
-    });
+    // ---------- 初始化（等 body 就绪再挂载） ----------
+    function init() {
+        document.body.appendChild(panel);
+        statusEl = $('dlr-status');
+        log('就绪。');
 
-    try {
-        const p = parseUrl(location.href);
-        $('dlr-url').value = location.href;
-        log('检测到直播 roomId=' + p.roomId + '  liveUuid=' + p.liveUuid.slice(0, 8) + '...。点击「下载本页回放」。');
-    } catch (e) {
-        // 当前页不是直播详情页，保持空
+        $('dlr-go').addEventListener('click', () => {
+            const raw = ($('dlr-url').value || '').trim() || location.href;
+            const opts = {
+                fmt: $('dlr-fmt').value,
+                threads: Math.max(1, Math.min(16, parseInt($('dlr-thread').value, 10) || 5)),
+                retry: Math.max(1, Math.min(10, parseInt($('dlr-retry').value, 10) || 3)),
+            };
+            try {
+                const { roomId, liveUuid } = parseUrl(raw);
+                run(roomId, liveUuid, opts);
+            } catch (e) {
+                log('❌ ' + e.message, true);
+            }
+        });
+
+        try {
+            const p = parseUrl(location.href);
+            $('dlr-url').value = location.href;
+            log('检测到直播 roomId=' + p.roomId + '  liveUuid=' + p.liveUuid.slice(0, 8) + '...。点击「下载本页回放」。');
+        } catch (e) {
+            // 当前页不是直播详情页
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
