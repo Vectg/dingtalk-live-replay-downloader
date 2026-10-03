@@ -3,72 +3,87 @@
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> A Tampermonkey userscript to download DingTalk live replays (no login) — outputs `.ts` or `.mp4`.
+A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
-通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，下载全部 TS 切片并拼接成一个文件。
-**无需登录钉钉账号**，在直播回放页面上点一下即可。
+通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件。**无需登录钉钉账号**，在回放页点一下即可。
 
-> 中文说明见下文；English summary above. 只用于下载你**有权留存**的内容。
+> Only download content **you have the right to keep**. 仅用于下载你有权留存的内容。
 
-可配置：
+---
 
-- **输出格式**：`.ts`（原始拼接，最稳，VLC/mpv/PotPlayer 播放）或 `.mp4`（用 `mux.js` 在浏览器内转封装，实验性；转封装失败会自动回退为 `.ts`）
-- **并发线程**：同时下载切片的数量（1–16，默认 5）
-- **重试次数**：单个切片下载失败时的重试次数（1–10，默认 3）
+## 功能（v1.6.0）
+
+- **无需登录**：`csrf` → `getOpenLiveInfoV2` 取带签名的播放地址，全程匿名。
+- **输出 MP4（默认）/ TS**：`.mp4` 由 `mux.js` 在浏览器内转封装；`.ts` 为原始拼接，兼容性最好。
+- **MP4 时长与进度条已修复**：`mux.js` 输出的 `moov/mvhd/mdhd` duration 写成 `0xFFFFFFFF`（unknown 哨兵），播放器会显示成十几小时、拖不动进度条、画面卡死。脚本遍历 `moof` 用 `tfdt + Σtrun` 算出真实时长写回，30 分钟回放即显示 30 分钟，文件大小不变。
+- **截取时长**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。
+- **内置预览**：下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
+- **失败诊断**：切片失败给出序号 + URL + 原因，并按错误类型给排查建议（401/403 签名过期、404 回放已清理、其他降并发/更新脚本）。
+- **进度动画**：进度条 + 分段日志，实时显示 `n/N` 与 MB/s。
+- **多码率 / AES-128 / fMP4 / BYTERANGE**：遇 `#EXT-X-STREAM-INF` 自动选最高带宽递归；遇 `#EXT-X-KEY` 用 Web Crypto 解密；支持 `#EXT-X-MAP` 与 `#EXT-X-BYTERANGE`。
+- **并发线程**（1–16，默认 5）、**重试次数**（1–10，默认 3，指数退避）、**记住保存路径**、**文件名加时间戳**。
 
 ---
 
 ## 安装
 
-1. 安装 [Tampermonkey（油猴）](https://www.tampermonkey.net/) 浏览器扩展。
-2. 打开本脚本的 **Raw 地址**（复制 GitHub 页面右上角 `Raw` 按钮的链接），Tampermonkey 会提示安装；或「新建脚本 → 粘贴内容」。
-3. 安装后，打开任意钉钉直播**回放**页（URL 形如 `n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`）。
+1. 安装 [Tampermonkey（油猴）](https://www.tampermonkey.net/)。
+2. 打开下面的 Raw 地址即可触发安装页：
+
+   ```
+   https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+   ```
+
+   脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**。
+
+3. 在 Edge / Chrome 还需到 `edge://extensions/`（或 `chrome://extensions/`）→ 篡改猴 → 详细信息，打开 **「允许用户脚本」**。此开关默认关闭时，油猴脚本一行都不会执行，右下角不会出现面板。
+
+> 面板不出现时：确认开关已开 → 油猴里脚本为启用状态 → 回放页 `Ctrl+F5` 强刷 → F12 Console 看报错。
+
+---
 
 ## 使用
 
-1. 打开目标直播回放页。
-2. 页面右下角出现「钉钉直播回放下载」面板，会自动读出本页的 `roomId` / `liveUuid`。
-3. 选择**输出格式**、**并发线程**、**重试次数**。
-4. 点「下载本页回放」，面板会显示进度：取 token → 拿播放地址 → 拉 m3u8 → 下载切片 → 拼接 → 保存。
-5. 完成后弹出保存对话框，保存为 `<标题>.ts` 或 `<标题>.mp4`。
+1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
+2. 按需设置：**输出格式**、**截取时长**（`mm:ss` 或 `hh:mm:ss`，留空为全部）、并发、重试。
+3. 点「下载本页回放」，进度条依次显示：取 token → 播放地址 → m3u8 → 切片 `n/N` → 拼接 → 保存。
+4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速与音量；同时弹出保存对话框。
+5. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页。
 
-也可以把任意回放链接粘贴进面板输入框再点下载（不必停留在该页）。
+也可以把 `.ts` 交给 ffmpeg 重封装：
+
+```bash
+ffmpeg -i in.ts -c copy -bsf:a aac_adtstoasc out.mp4
+```
+
+Windows 下中文文件名/引号易出问题，建议用 Python `subprocess.run([...])` 传参，或先改 ASCII 临时名。
 
 ---
 
 ## 原理
 
-- `GET https://lv.dingtalk.com/csrf`（**不带 Origin 头**）拿到 CSRF token，并得到 `XSRF-TOKEN` cookie。
-- `POST https://lv.dingtalk.com/getOpenLiveInfoV2`（**单对象 body**，同时带 `XSRF-TOKEN` cookie 与 `X-XSRF-TOKEN` 头）→ 返回 `openLiveDetailModel.playbackUrl`（带签名的 m3u8，有效期约 10 天）。
-- 拉取 m3u8，解析其中的 `.ts` 切片 URL（每片带各自签名）。
-- 若返回的是**多码率主播放列表**（`#EXT-X-STREAM-INF`），自动选择最高带宽并递归解析。
-- 若 m3u8 带 **AES-128 加密**（`#EXT-X-KEY`），用 Web Crypto 拉取 key 并逐片解密。
-- 并发下载全部切片，按顺序字节拼接成单个 `.ts`。
-
-关键点：`getOpenLiveInfo`（V1）的 `playbackUrl` 对匿名用户是**空字符串**，必须用 V2；`sliceCount`/`sliceDuration` 是雪碧图参数，**不是**切片数，切片数以 m3u8 实际条目为准。
+- `GET https://lv.dingtalk.com/csrf` —— **绝不能带 Origin 头**，否则返回 403 `Invalid CORS request`；拿到 token 与 `XSRF-TOKEN` cookie。
+- `POST https://lv.dingtalk.com/getOpenLiveInfoV2` —— body 是**单个对象** `{roomId, liveUuid}`，且必须同时带 `XSRF-TOKEN` cookie 与 `X-XSRF-TOKEN` 头（同一 token）→ 返回 `openLiveDetailModel.playbackUrl`（带签名的 m3u8，约 10 天有效）。
+- 解析 m3u8 得到带各自签名的切片 URL，并发下载后按顺序字节拼接。
+- `getOpenLiveInfo`（V1）对匿名用户 `playbackUrl` 是**空字符串**，必须用 V2；`sliceCount`/`sliceDuration` 是雪碧图参数、**不是**切片数，以 m3u8 实际条目为准。
+- **MP4 duration 修补**：`mux.js` 面向 MSE 流式播放，`moov` 里 `mvhd/tkhd/mdhd` 的 duration 留为 `0xFFFFFFFF`。脚本遍历 `moof/traf`，用 `tfdt + Σtrun.sample_duration` 算出每轨真实结束时间，换算 timescale 后写回；媒体数据本身不变、文件大小不变。
 
 ---
 
-## 转成 MP4（可选）
+## 已知限制
 
-脚本已内置 **MP4 转封装**（`mux.js`，`@require` 加载，在浏览器内完成，无需额外工具）。若你更习惯用 ffmpeg，也可把 `.ts` 交给它重封装：
-
-```bash
-# 先建 concat 列表（按数字升序）
-for i in $(seq 1 <N>); do echo "file 'ts/$i.ts'"; done > concat.txt
-ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -bsf:a aac_adtstoasc out.mp4
-```
-
-Windows 下若遇到带引号/中文文件名的路径问题，用 Python `subprocess.run([...])` 传参。
+- 截取按切片边界对齐（约 30 秒粒度），非帧级精确。
+- 预览的**倍速/音量只作用于面板内播放**，不改变已保存的文件——改写音频音量或播放速度需重新编码，浏览器内无法可靠完成；需要这类处理请把 `.ts` 交给 ffmpeg。
+- `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
+- 回放签名约 10 天有效，过期后重新点一次下载即可。
+- 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
+- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
 
 ---
 
-## 注意事项
+## 版权提示
 
-- **版权与条款**：脚本通过公开接口抓取回放。请仅下载自己有权留存的内容，勿传播或用于商业用途。
-- 回放签名约 10 天有效，过期后重新跑一次即可（每次调用会拿到全新签名）。
-- 已授权 `@connect *`：`GM_xmlhttpRequest` 需要匹配域名，回放/切片/key 所在的 HLS CDN 域名不固定，故放开为任意域名。介意可改成具体 CDN 域名（如 `dtliving-sz.dingtalk.com`）并自行补充。
-- 已授权最小权限：`GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）。
+脚本通过公开接口获取回放，**绕过 CDN 签名**。钉钉《用户协议》可能将「规避访问控制」列为违约，回放内容本身可能受版权保护。仅用于下载**你自己有权留存**的内容，请勿传播或用于商业用途。
 
 ---
 
