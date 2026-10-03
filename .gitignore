@@ -18,6 +18,10 @@ Thumbs.db
 .idea/
 .vscode/
 
+# 临时测试/探针脚本（跑完即删，勿入库）
+_*.js
+_*.py
+
 # 平台
 .ohmyagent/
 .monkeycode/
