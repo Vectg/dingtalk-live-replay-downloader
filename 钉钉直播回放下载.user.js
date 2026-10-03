@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.4
+// @version      1.6.5
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -120,10 +120,16 @@
     }
 
     // ---------- 工具 ----------
+    // 空名返回 null（表示「用默认」），不是 'replay'——否则回放标题永远无法回退
     function sanitize(name) {
         let s = String(name || '').replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim();
         if (s.length > 120) s = s.slice(0, 120);
-        return s || 'replay';
+        return s || null;
+    }
+    // 给一个非空兜底名（真正要用默认值时调用）
+    function safeName(name, fallback) {
+        const s = sanitize(name);
+        return (s && s.replace(/\.(mp4|ts|m4s|mp3)$/i, '')) || fallback || 'replay';
     }
 
     function stamp() {
@@ -612,11 +618,13 @@
         #dlr-panel.mini .expand{padding:7px 13px;font-size:12px}
         #dlr-panel.mini .expand .lb{display:none}
         #dlr-panel.mini.frost{background:rgba(22,24,29,.55)}
+        /* 收缩态隐藏一切非展开条元素：用 !important 压过 JS 动态写入的内联样式 */
         #dlr-panel.mini .collapse,
         #dlr-panel.mini h3,
         #dlr-panel.mini .sec,#dlr-panel.mini .sub,
-        #dlr-panel.mini #dlr-progress,#dlr-panel.mini #dlr-status,#dlr-panel.mini #dlr-preview,
-        #dlr-panel.mini .tip,#dlr-panel.mini .foot{display:none}
+        #dlr-panel.mini #dlr-progress,#dlr-panel.mini #dlr-status,
+        #dlr-panel.mini #dlr-preview,#dlr-panel.mini #dlr-preview *,
+        #dlr-panel.mini .tip,#dlr-panel.mini .foot{display:none !important}
         #dlr-panel.mini .expand{display:flex}
         /* 展开态：默认隐藏展开按钮 */
         #dlr-panel .expand{display:none;align-items:center;gap:7px;cursor:pointer;
@@ -635,6 +643,13 @@
             font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
         #dlr-panel .foot a{color:#7d828d;text-decoration:none}
         #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
+        /* 界面外的旋转光圈：下载进行中显示，收缩态下也可见 */
+        #dlr-orbit{position:fixed;right:26px;bottom:26px;z-index:1000000;width:34px;height:34px;
+            border-radius:50%;border:3px solid rgba(61,110,255,.25);border-top-color:#3d6eff;
+            animation:dlrOrbit .8s linear infinite;display:none;pointer-events:none;
+            box-shadow:0 0 14px rgba(61,110,255,.4)}
+        #dlr-orbit.on{display:block}
+        @keyframes dlrOrbit{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
         #dlr-panel.frost{background:rgba(22,24,29,.72);-webkit-backdrop-filter:blur(14px) saturate(150%);
             backdrop-filter:blur(14px) saturate(150%);border-color:rgba(255,255,255,.09);
@@ -645,6 +660,11 @@
     `);
 
     const $ = (id) => document.getElementById(id);
+
+    // 界面外的旋转光圈：下载进行中显示，收缩态下也可见
+    const orbit = document.createElement('div');
+    orbit.id = 'dlr-orbit';
+    orbit.title = '正在下载…';
 
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
@@ -769,6 +789,7 @@
         p.querySelector('.bar').style.width = '0%';
         p.querySelector('.pct').textContent = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
+        if (orbit) orbit.classList.add('on');
     }
     function progressSet(pct, label) {
         const p = $('dlr-progress');
@@ -781,6 +802,7 @@
         const p = $('dlr-progress');
         const s = $('dlr-spin');
         if (s) s.style.display = 'none';
+        if (orbit) orbit.classList.remove('on');
         if (!p) return;
         if (ok) {
             progressSet(100, '完成');
@@ -802,13 +824,12 @@
 
             appendLog('② 获取播放地址 getOpenLiveInfoV2 ...');
             const model = await getPlayback(roomId, liveUuid, token);
-            const autoName = sanitize(model.title || liveUuid);
-            // 面板填了文件名就优先用，并清掉用户可能误带的后缀
-            const customName = sanitize(opts.name || '').trim();
-            const baseName = customName.replace(/\.(mp4|ts|m4s|mp3)$/i, '') || autoName;
+            // 留空 = 用回放标题；填了则优先，并自动去掉误带的后缀
+            const autoName = safeName(model.title, liveUuid);
+            const baseName = safeName(opts.name, autoName);
             appendLog('   标题: ' + model.title +
                 '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知') +
-                (customName ? '  文件名: ' + baseName : ''));
+                (opts.name ? '  文件名: ' + baseName : ''));
             progressSet(P.prep, '准备');
 
             appendLog('③ 拉取 m3u8 ...');
@@ -937,6 +958,8 @@
 
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
+        // 光圈必须挂在面板之前，#dlr-panel.mini ~ #dlr-orbit 兄弟选择器才生效
+        document.body.appendChild(orbit);
         document.body.appendChild(panel);
         statusEl = $('dlr-status');
         // 面板挂载前缓存的日志：单行模式只回放最后一条
@@ -971,6 +994,11 @@
             miniState = v;
             try { GM_setValue('dlr_mini', v); } catch (e) {}
             applyMini();
+            // 收缩态把光圈挪到药丸左上方，避免和图标重叠
+            if (orbit) {
+                orbit.style.right = v ? '60px' : '';
+                orbit.style.bottom = v ? '52px' : '';
+            }
         };
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
@@ -1003,6 +1031,7 @@
                 stamp: $('dlr-stamp').checked,
                 clipFrom,
                 clipTo,
+                name: ($('dlr-name').value || '').trim(),
             };
             try {
                 const { roomId, liveUuid } = parseUrl(raw);
