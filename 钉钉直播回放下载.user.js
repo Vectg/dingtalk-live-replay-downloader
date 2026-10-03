@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.3.0
+// @version      1.3.1
 // @description  通过公开接口获取钉钉直播回放 m3u8，下载全部切片，支持 TS 拼接 / MP4 转封装、多码率 m3u8、AES-128 解密、并发数与重试次数。无需登录。
 // @author       agent
 // @license      MIT
@@ -14,6 +14,10 @@
 // @connect      lv.dingtalk.com
 // @connect      dtliving-sz.dingtalk.com
 // @connect      dtlive-sz.dingtalk.com
+// @updateURL    https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+// @downloadURL  https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+// @homepageURL  https://github.com/Vectg/dingtalk-live-replay-downloader
+// @supportURL   https://github.com/Vectg/dingtalk-live-replay-downloader/issues
 // ==/UserScript==
 
 (function () {
