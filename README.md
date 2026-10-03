@@ -41,6 +41,8 @@
 - `GET https://lv.dingtalk.com/csrf`（**不带 Origin 头**）拿到 CSRF token，并得到 `XSRF-TOKEN` cookie。
 - `POST https://lv.dingtalk.com/getOpenLiveInfoV2`（**单对象 body**，同时带 `XSRF-TOKEN` cookie 与 `X-XSRF-TOKEN` 头）→ 返回 `openLiveDetailModel.playbackUrl`（带签名的 m3u8，有效期约 10 天）。
 - 拉取 m3u8，解析其中的 `.ts` 切片 URL（每片带各自签名）。
+- 若返回的是**多码率主播放列表**（`#EXT-X-STREAM-INF`），自动选择最高带宽并递归解析。
+- 若 m3u8 带 **AES-128 加密**（`#EXT-X-KEY`），用 Web Crypto 拉取 key 并逐片解密。
 - 并发下载全部切片，按顺序字节拼接成单个 `.ts`。
 
 关键点：`getOpenLiveInfo`（V1）的 `playbackUrl` 对匿名用户是**空字符串**，必须用 V2；`sliceCount`/`sliceDuration` 是雪碧图参数，**不是**切片数，切片数以 m3u8 实际条目为准。
@@ -65,7 +67,7 @@ Windows 下若遇到带引号/中文文件名的路径问题，用 Python `subpr
 
 - **版权与条款**：脚本通过公开接口抓取回放。请仅下载自己有权留存的内容，勿传播或用于商业用途。
 - 回放签名约 10 天有效，过期后重新跑一次即可（每次调用会拿到全新签名）。
-- 需要 `@connect` 权限：除脚本自带的 `lv.dingtalk.com` 与 `dtliving-sz.dingtalk.com` 之外，若在非标准镜像域名上运行，请自行补充。
+- 已授权 `@connect *`：`GM_xmlhttpRequest` 需要匹配域名，回放/切片/key 所在的 HLS CDN 域名不固定，故放开为任意域名。介意可改成具体 CDN 域名（如 `dtliving-sz.dingtalk.com`）并自行补充。
 - 已授权最小权限：`GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）。
 
 ---

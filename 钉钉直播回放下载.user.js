@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.1.0
-// @description  通过公开接口获取钉钉直播回放 m3u8，下载全部切片，支持选择 TS 拼接 / MP4 转封装、并发数与重试次数。无需登录。
+// @version      1.2.0
+// @description  通过公开接口获取钉钉直播回放 m3u8，下载全部切片，支持 TS 拼接 / MP4 转封装、多码率 m3u8、AES-128 解密、并发数与重试次数。无需登录。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -10,6 +10,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_download
 // @grant        GM_addStyle
+// @connect      *
 // @connect      lv.dingtalk.com
 // @connect      dtliving-sz.dingtalk.com
 // @connect      dtlive-sz.dingtalk.com
@@ -133,6 +134,116 @@
         return new Blob([init, ...frags], { type: 'video/mp4' });
     }
 
+    // ---------- m3u8 解析（支持 master/多码率 + AES-128） ----------
+    function resolveUrl(base, v) {
+        if (!v) return '';
+        try { return new URL(v, base).href; } catch (e) { return v; }
+    }
+
+    function parseAttributes(attrText) {
+        const out = Object.create(null);
+        const re = /([a-zA-Z0-9-]+)=("[^"]*"|[^,]*)/g;
+        let m;
+        while ((m = re.exec(attrText)) !== null) {
+            out[m[1].toUpperCase()] = m[2].replace(/^"|"$/g, '');
+        }
+        return out;
+    }
+
+    async function fetchAndParseM3u8(url, depth = 0) {
+        if (depth > 5) throw new Error('m3u8 嵌套层级过多');
+        const text = await getText(url, '');
+        const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+        const variants = [];
+        const segments = [];
+        let currentKey = null;
+        let pending = null;      // 待解析的 STREAM-INF 带宽
+        let mediaSequence = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+                mediaSequence = parseInt(line.split(':')[1], 10) || 0;
+                continue;
+            }
+            if (line.startsWith('#EXT-X-STREAM-INF:')) {
+                const attrs = parseAttributes(line.slice('#EXT-X-STREAM-INF:'.length));
+                pending = parseInt(attrs.BANDWIDTH || '0', 10) || 0;
+                continue;
+            }
+            if (line.startsWith('#EXT-X-KEY:')) {
+                const attrs = parseAttributes(line.slice('#EXT-X-KEY:'.length));
+                const method = String(attrs.METHOD || 'NONE').toUpperCase();
+                if (method === 'NONE') currentKey = null;
+                else currentKey = { method, uri: resolveUrl(url, attrs.URI || ''), iv: attrs.IV || '' };
+                continue;
+            }
+            if (!line.startsWith('#')) {
+                const u = resolveUrl(url, line);
+                if (pending !== null) {
+                    variants.push({ url: u, bandwidth: pending });
+                    pending = null;
+                } else {
+                    segments.push({
+                        url: u,
+                        sequence: mediaSequence + segments.length,
+                        key: currentKey ? { ...currentKey } : null,
+                    });
+                }
+            }
+        }
+
+        if (variants.length) {
+            variants.sort((a, b) => b.bandwidth - a.bandwidth);
+            appendLog('   多码率，选择最高带宽 ' + variants[0].bandwidth + ' bps');
+            return fetchAndParseM3u8(variants[0].url, depth + 1);
+        }
+        if (!segments.length) throw new Error('m3u8 无切片');
+
+        const encrypted = segments.some((s) => s.key && s.key.method === 'AES-128');
+        return { playlistUrl: url, segments, encrypted };
+    }
+
+    // ---------- AES-128 分片解密 ----------
+    function hexToBytes(v) {
+        const hex = String(v || '').replace(/^0x/i, '').replace(/\s/g, '');
+        const out = new Uint8Array(Math.ceil(hex.length / 2));
+        for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16) || 0;
+        return out;
+    }
+    function seqIv(seq) {
+        const iv = new Uint8Array(16);
+        new DataView(iv.buffer).setUint32(12, seq >>> 0, false);
+        return iv;
+    }
+    function keyIv(iv, seq) {
+        if (!iv) return seqIv(seq);
+        const b = hexToBytes(iv);
+        return b.length === 16 ? b : seqIv(seq);
+    }
+    async function getKeyBytes(key, cache) {
+        if (cache.has(key.uri)) return cache.get(key.uri);
+        const raw = await getBinary(key.uri, '');
+        cache.set(key.uri, raw);
+        return raw;
+    }
+    async function aesDecrypt(buffer, keyBytes, iv) {
+        const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['decrypt']);
+        const dec = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, cryptoKey, buffer);
+        return new Uint8Array(dec);
+    }
+    async function downloadSegment(seg, keyCache) {
+        let bytes = await getBinary(seg.url, '');
+        if (seg.key && seg.key.method === 'AES-128') {
+            const keyBytes = await getKeyBytes(seg.key, keyCache);
+            bytes = await aesDecrypt(bytes, keyBytes, keyIv(seg.key.iv, seg.sequence));
+        } else if (seg.key && seg.key.method && seg.key.method !== 'NONE') {
+            throw new Error('不支持的 HLS 加密方式: ' + seg.key.method);
+        }
+        return bytes;
+    }
+
     // ---------- UI ----------
     GM_addStyle(`
         #dlr-panel{position:fixed;right:16px;bottom:16px;z-index:999999;width:380px;background:#fff;
@@ -209,21 +320,15 @@
             appendLog('   标题: ' + model.title + '  时长: ' + (model.playbackDuration / 1000).toFixed(1) + 's');
 
             appendLog('③ 拉取 m3u8 ...');
-            const text = await getText(model.playbackUrl, '');
-            const base = model.playbackUrl.slice(0, model.playbackUrl.lastIndexOf('/') + 1);
-            const segs = [];
-            for (const line of text.split('\n')) {
-                const l = line.trim();
-                if (!l || l.startsWith('#')) continue;
-                segs.push(l.startsWith('http') ? l : base + l);
-            }
-            appendLog('   切片数: ' + segs.length);
-            if (!segs.length) throw new Error('m3u8 无切片');
+            const parsed = await fetchAndParseM3u8(model.playbackUrl);
+            const segs = parsed.segments;
+            appendLog('   切片数: ' + segs.length + (parsed.encrypted ? '   AES-128 加密' : ''));
 
             appendLog('④ 下载切片（并发 ' + opts.threads + '，重试 ' + opts.retry + '）...');
             const datas = new Array(segs.length);
             let cursor = 0, done = 0;
             const failed = [];
+            const keyCache = new Map();
             const worker = async () => {
                 while (true) {
                     const i = cursor++;
@@ -231,7 +336,7 @@
                     let got = false;
                     for (let t = 0; t < opts.retry && !got; t++) {
                         try {
-                            datas[i] = await getBinary(segs[i], '');
+                            datas[i] = await downloadSegment(segs[i], keyCache);
                             got = true;
                             done++;
                             if (done % 10 === 0 || done === segs.length) appendLog('   ' + done + '/' + segs.length);
