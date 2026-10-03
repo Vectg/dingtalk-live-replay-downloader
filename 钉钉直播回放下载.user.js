@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.8.1
+// @version      1.9.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1016,6 +1016,120 @@
         }
     }
 
+    // ---------- 原始分辨率自动分析：TS 解包 → H.264 SPS ----------
+    // 真实回放是单档 TS（无 STREAM-INF 变体），分辨率只能从切片内 SPS 读出。
+    // 已用真实切片验证：1280×720 Main@3.1。
+    function parseSpsToDims(nal) {
+        let bit = 0;
+        const maxBit = nal.length * 8;
+        const getBit = () => {
+            if (bit >= maxBit) throw new Error('SPS 越界');
+            const v = (nal[bit >> 3] >> (7 - (bit & 7))) & 1;
+            bit++;
+            return v;
+        };
+        const getBits = (n) => { let v = 0; for (let i = 0; i < n; i++) v = (v << 1) | getBit(); return v; };
+        const ue = () => { let z = 0; while (getBit() === 0) z++; if (z > 31) throw new Error('ue 异常'); return (1 << z) - 1 + getBits(z); };
+        const se = () => { const v = ue(); return (v & 1) ? (v + 1) / 2 : -(v / 2); };
+
+        bit = 8;                                    // 跳 NAL header（nal[0] 必须是 0x67）
+        const profileIdc = getBits(8);
+        getBits(8);                                 // constraint flags + reserved
+        const levelIdc = getBits(8);
+        ue();                                       // seq_parameter_set_id
+        let chromaFormatIdc = 1;
+        if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].indexOf(profileIdc) >= 0) {
+            chromaFormatIdc = ue();
+            if (chromaFormatIdc === 3) getBit();
+            ue(); ue(); getBit();
+            if (getBit()) {                         // seq_scaling_matrix_present
+                const n = chromaFormatIdc !== 3 ? 8 : 12;
+                for (let i = 0; i < n; i++) {
+                    if (getBit()) {
+                        let next = 8;
+                        const size = i < 6 ? 16 : 64;
+                        for (let j = 0; j < size; j++) {
+                            if (next !== 0) { const d = se(); next = (next + d + 256) % 256; }
+                        }
+                    }
+                }
+            }
+        }
+        ue();                                       // log2_max_frame_num_minus4
+        const pocType = ue();
+        if (pocType === 0) ue();
+        else if (pocType === 1) { getBit(); se(); se(); const n = ue(); for (let i = 0; i < n; i++) se(); }
+        ue(); getBit();                             // max_num_ref_frames, gaps_in_frame_num
+        const picWidthInMbs = ue() + 1;
+        const picHeightInMapUnits = ue() + 1;
+        const frameMbsOnly = getBit();
+        if (!frameMbsOnly) getBit();
+        getBit();                                   // direct_8x8_inference
+        let cropL = 0, cropR = 0, cropT = 0, cropB = 0;
+        if (getBit()) { cropL = ue(); cropR = ue(); cropT = ue(); cropB = ue(); }
+        const subWidthC = (chromaFormatIdc === 1 || chromaFormatIdc === 2) ? 2 : 1;
+        const subHeightC = (chromaFormatIdc === 1) ? 2 : 1;
+        const cropUnitX = (chromaFormatIdc === 0) ? 1 : subWidthC;
+        const cropUnitY = (chromaFormatIdc === 0) ? (2 - frameMbsOnly) : subHeightC * (2 - frameMbsOnly);
+        const width = picWidthInMbs * 16 - (cropL + cropR) * cropUnitX;
+        const height = (2 - frameMbsOnly) * picHeightInMapUnits * 16 - (cropT + cropB) * cropUnitY;
+        if (!(width > 0 && height > 0 && width <= 7680 && height <= 4320)) throw new Error('分辨率越界 ' + width + 'x' + height);
+        return { width, height, profileIdc, levelIdc };
+    }
+
+    // TS → PES payload → Annex B，收集 type=7(SPS) 候选（b 指向 NAL header）
+    function findSpsCandidates(buf) {
+        const pes = [];
+        for (let off = 0; off + 188 <= buf.length; off++) {
+            if (buf[off] !== 0x47) continue;
+            const pusi = (buf[off + 1] & 0x40) !== 0;
+            const afc = (buf[off + 3] >> 4) & 0x3;
+            let payload = off + 4;
+            if (afc === 2 || afc === 3) payload = off + 5 + buf[off + 4];
+            if (afc === 0 || payload >= off + 188) { off += 187; continue; }
+            if (pusi) pes.push(-1);
+            for (let i = payload; i < off + 188; i++) pes.push(buf[i]);
+            off += 187;
+        }
+        const p = Uint8Array.from(pes.filter((x) => x >= 0));
+        let s = -1;
+        for (let i = 0; i + 4 < p.length; i++) {
+            if (p[i] === 0 && p[i + 1] === 0 && p[i + 2] === 1 && p[i + 3] >= 0xE0 && p[i + 3] <= 0xEF) {
+                const hdrLen = p[i + 6];
+                s = i + 9 + hdrLen;
+                break;
+            }
+        }
+        if (s < 0) return [];
+        const starts = [];
+        for (let i = s; i + 4 < p.length; i++) {
+            if (p[i] === 0 && p[i + 1] === 0 && p[i + 2] === 1) { starts.push({ t: p[i + 3] & 0x1F, b: i + 3 }); i += 3; }
+            else if (p[i] === 0 && p[i + 1] === 0 && p[i + 2] === 0 && p[i + 3] === 1) { starts.push({ t: p[i + 4] & 0x1F, b: i + 4 }); i += 4; }
+        }
+        const hits = [];
+        for (let k = 0; k < starts.length; k++) {
+            if (starts[k].t !== 7) continue;
+            let end = p.length;
+            for (let j = starts[k].b; j + 4 < p.length; j++) {
+                if (p[j] === 0 && p[j + 1] === 0 && p[j + 2] <= 1) { end = j; break; }
+            }
+            hits.push(p.subarray(starts[k].b, end));
+        }
+        return hits;
+    }
+
+    async function probeResolution(segUrl) {
+        const r = await gmx({ url: segUrl, binary: true, headers: { Range: 'bytes=0-65535' } });
+        const buf = new Uint8Array(r.response);
+        if (buf[0] !== 0x47) return null;           // 非 TS（fMP4 等）不探测
+        for (const nal of findSpsCandidates(buf)) {
+            try {
+                if (nal[0] === 0x67) return parseSpsToDims(nal);
+            } catch (e) { /* 尝试下一个候选 */ }
+        }
+        return null;
+    }
+
     // ---------- 预解析：csrf → 播放地址 → m3u8，可被 run() 复用 ----------
     // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
     let prepCache = null;      // {key, at, token, model, parsed}
@@ -1039,7 +1153,20 @@
             appendLog('   回放总时长 ' + fmtTime(parsed.totalDur) +
                 '（' + parsed.segments.length + ' 个切片）');
         }
-        prepCache = { key, at: Date.now(), token, model, parsed };
+        // 单档 TS → 探测首片 SPS 得出原始分辨率（多档时分辨率来自变体 RESOLUTION 属性）
+        let resInfo = null;
+        if (!parsed.variants.length && !parsed.fmp4 && parsed.segments.length) {
+            try {
+                resInfo = await probeResolution(parsed.segments[0].url);
+                if (resInfo) {
+                    const profiles = { 77: 'Main', 66: 'Baseline', 100: 'High' };
+                    const profile = profiles[resInfo.profileIdc] || ('profile ' + resInfo.profileIdc);
+                    appendLog('   原始分辨率 ' + resInfo.width + '×' + resInfo.height +
+                        '（H.264 ' + profile + ' @' + (resInfo.levelIdc / 10).toFixed(1) + '）');
+                }
+            } catch (e) { appendLog('   ⚠ 分辨率探测失败: ' + e.message); }
+        }
+        prepCache = { key, at: Date.now(), token, model, parsed, resInfo };
         return prepCache;
     }
 
@@ -1294,8 +1421,16 @@
         // 分辨率：默认自动（原始=最高带宽）；预取后回填各档位，切换即重新预取
         const resSel = $('dlr-res');
         try { const rv = GM_getValue('dlr_res'); if (rv) resSel.value = rv; } catch (e) { }
-        const fillResOptions = (variants) => {
-            if (!resSel || !variants || variants.length < 2) return;
+        const fillResOptions = (variants, resInfo) => {
+            if (!resSel) return;
+            // 自动项标注探测到的原始分辨率
+            const auto0 = resSel.options[0];
+            if (auto0) {
+                auto0.textContent = resInfo
+                    ? '自动（原始分辨率 ' + resInfo.width + '×' + resInfo.height + '）'
+                    : '自动（原始分辨率）';
+            }
+            if (!variants || variants.length < 2) return;
             const cur = resSel.value;
             resSel.innerHTML = '<option value="">自动（原始分辨率）</option>';
             variants.forEach((v) => {
@@ -1316,7 +1451,7 @@
                 setStatus('⏳ 已切换分辨率，重新预取…');
                 prep(p.roomId, p.liveUuid, resSel.value).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
-                    if (fillResOptions) fillResOptions(prepCache.parsed.variants);
+                    if (fillResOptions) fillResOptions(prepCache.parsed.variants, prepCache.resInfo);
                     setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
                         ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
                 }).catch((e) => setStatus('⚠ 预取失败：' + e.message, true));
@@ -1475,7 +1610,7 @@
                 setStatus('⏳ 正在预取播放地址与切片索引…');
                 prep(p.roomId, p.liveUuid, resSel.value).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
-                    if (fillResOptions) fillResOptions(prepCache.parsed.variants);
+                    if (fillResOptions) fillResOptions(prepCache.parsed.variants, prepCache.resInfo);
                     setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
                         ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
                 }).catch((e) => {
