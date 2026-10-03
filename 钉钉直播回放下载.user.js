@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.8.0
+// @version      1.8.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -41,28 +41,52 @@
     const logBuffer = [];
     let statusEl = null;
 
-    function appendLog(msg) {
-        if (!statusEl) {
-            logBuffer.push(String(msg));
-            if (logBuffer.length > 200) logBuffer.shift();
-            return;
+    // 输出历史：默认只显示最新一条，点击状态栏展开查看全部（最多留 300 条）
+    const logHistory = [];
+    function pushHistory(line) {
+        logHistory.push(line);
+        if (logHistory.length > 300) logHistory.shift();
+        const s = $('dlr-status');
+        if (s && s.classList.contains('hist')) {
+            s.textContent = logHistory.join('\n');
+            s.scrollTop = s.scrollHeight;
         }
-        // 单行模式：只保留最新一行，前缀加时间
+    }
+    function appendLog(msg) {
         const now = new Date();
         const t = String(now.getHours()).padStart(2, '0') + ':' +
             String(now.getMinutes()).padStart(2, '0') + ':' +
             String(now.getSeconds()).padStart(2, '0');
-        statusEl.textContent = t + '  ' + String(msg);
+        const line = t + '  ' + String(msg);
+        if (!statusEl) {
+            logBuffer.push(line);
+            if (logBuffer.length > 200) logBuffer.shift();
+            return;
+        }
+        pushHistory(line);
+        // 默认只保留最新一行（展开历史时 pushHistory 内部会渲染全量）
+        if (!statusEl.classList.contains('hist')) statusEl.textContent = line;
     }
 
     function setStatus(msg, isErr) {
-        const safe = String(msg).replace(/</g, '&lt;');
+        const raw = String(msg);
         if (!statusEl) {
             logBuffer.length = 0;
-            logBuffer.push(isErr ? safe + '（面板未挂载）' : safe);
+            logBuffer.push(isErr ? raw + '（面板未挂载）' : raw);
             return;
         }
-        statusEl.innerHTML = isErr ? '<span class="err">' + safe + '</span>' : safe;
+        pushHistory((isErr ? '❌ ' : '') + raw);
+        if (statusEl.classList.contains('hist')) return;   // 展开态由 pushHistory 渲染
+        // 用 textContent/DOM 构造，不走 innerHTML —— 从根上免去 HTML 转义
+        statusEl.textContent = '';
+        if (isErr) {
+            const sp = document.createElement('span');
+            sp.className = 'err';
+            sp.textContent = raw;
+            statusEl.appendChild(sp);
+        } else {
+            statusEl.textContent = raw;
+        }
     }
 
     // ---------- GM 请求封装 ----------
@@ -696,8 +720,14 @@
         @keyframes dlrSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
         #dlr-spin{display:none;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:dlrSpin .8s linear infinite;vertical-align:-2px;margin-right:6px}
         #dlr-status{margin-top:8px;padding:6px 8px;background:#0f1115;border:1px solid #23262e;border-radius:6px;
-            white-space:normal;overflow-wrap:anywhere;font-size:12px;color:#aeb3bd;
-            min-height:28px;line-height:1.5}
+            white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:#aeb3bd;
+            min-height:28px;line-height:1.5;cursor:pointer}
+        /* 点击状态栏 → 展开历史日志（再点收起，默认只显示最新一条） */
+        #dlr-status.hist{max-height:170px;overflow-y:auto;cursor:ns-resize;
+            border-color:#2f3542;scrollbar-width:thin}
+        #dlr-status.hist::after{content:'— 点击收起 —';display:block;text-align:center;
+            color:#5a5f6b;font-size:10px;margin-top:4px}
+        #dlr-status:not(.hist)::before{content:'🕘 ';opacity:.55}
         #dlr-panel .err{color:#ff7a7a}
         #dlr-preview{display:none;margin-top:10px;border-top:1px solid #23262e;padding-top:10px}
         #dlr-preview .ph{position:relative;background:#000;border-radius:8px;overflow:hidden}
@@ -729,6 +759,8 @@
             background:rgba(22,24,29,.85);
             grid-template-rows:0fr;opacity:0;padding:0;border-width:0;pointer-events:none}
         #dlr-panel.mini.frost .body{background:rgba(22,24,29,.55)}
+        #dlr-panel.mini.frost .expand{background:rgba(22,24,29,.55);
+            backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel.mini .collapse{opacity:0}
         /* 展开态：默认隐藏收缩条 */
         #dlr-panel .expand{display:none;flex-direction:column;gap:7px;cursor:pointer;
@@ -747,7 +779,13 @@
         #dlr-panel .expand .ex-bar{height:100%;width:0%;border-radius:2px;
             background:#3d6eff;transition:width .25s ease,background-color .3s ease}
         #dlr-panel .expand.dl .ex-bar{background:#22c55e}
-        #dlr-panel .expand:hover{background:rgba(255,255,255,.05)}
+        /* hover 不能改 background（会整块换成半透明白=白色糊），改为阴影层叠加 */
+        #dlr-panel .expand:hover{box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),
+            0 4px 16px rgba(0,0,0,.45)}
+        /* 毛玻璃开：收缩条同样半透明+背景模糊（原先被 .expand 实心底盖住=没毛玻璃） */
+        #dlr-panel.mini.frost .expand{background:rgba(22,24,29,.55);
+            -webkit-backdrop-filter:blur(14px) saturate(150%);backdrop-filter:blur(14px) saturate(150%)}
+        #dlr-panel .expand:active{transform:scale(.995)}
         #dlr-panel.mini .expand{display:flex;opacity:1}
         #dlr-panel.mini .expand:hover .ic{transform:scale(1.12)}
         #dlr-panel.mini .expand .ic{transition:transform 220ms cubic-bezier(0.16,1,0.3,1)}
@@ -1201,8 +1239,20 @@
         window.__ringShow = ringShow;
         window.__ringHide = ringHide;
         statusEl = $('dlr-status');
-        // 面板挂载前缓存的日志：单行模式只回放最后一条
+        // 点击状态栏：展开/收起历史日志
+        statusEl.title = '点击展开/收起输出历史';
+        statusEl.addEventListener('click', () => {
+            const on = statusEl.classList.toggle('hist');
+            if (on) {
+                statusEl.textContent = logHistory.join('\n');
+                statusEl.scrollTop = statusEl.scrollHeight;
+            } else if (logHistory.length) {
+                statusEl.textContent = logHistory[logHistory.length - 1];
+            }
+        });
+        // 面板挂载前缓存的日志：并入历史，界面显示最后一条
         if (logBuffer.length) {
+            logHistory.push(...logBuffer);
             statusEl.textContent = logBuffer[logBuffer.length - 1];
             logBuffer.length = 0;
         }
