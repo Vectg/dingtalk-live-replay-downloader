@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.9
+// @version      1.7.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -157,10 +157,10 @@
         return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
     }
 
-    // 勾选「记住保存路径」后，第一次弹框，之后静默存到默认下载目录
-    let saveAsDone = false;
-    // GM_download 在用户「取消」保存对话框时不会触发任何回调，故加超时判定为已取消
-    function downloadBlob(blob, filename, rememberPath) {
+    // 不弹保存对话框：GM_download 的 saveAs 对话框在油猴里点「取消」也不会回传任何回调，
+    // 无法可靠判断是否已取消（超时猜测会造成「点取消却仍在下载」）。改为直接交给浏览器
+    // 存到默认下载目录，无对话框、无需取消判断。
+    function downloadBlob(blob, filename) {
         return new Promise((resolve, reject) => {
             const url = URL.createObjectURL(blob);
             let fellBack = false;
@@ -175,11 +175,10 @@
                 cleanup();
                 setTimeout(() => done('saved'), 300);
             }
-            const wantDialog = !(rememberPath && saveAsDone);
             try {
                 GM_download({
-                    url, name: filename, saveAs: wantDialog,
-                    onload: () => { saveAsDone = true; cleanup(); done('saved'); },
+                    url, name: filename, saveAs: false,
+                    onload: () => { cleanup(); done('saved'); },
                     onerror: (e) => {
                         if (!fellBack) { fellBack = true; anchorFallback(); }
                         else fail(new Error('保存失败 ' + (e && e.error ? e.error : '')));
@@ -189,10 +188,6 @@
                         else fail(new Error('保存超时'));
                     },
                 });
-                // 弹框模式下若一直无回调，视为用户取消了保存对话框（油猴取消时不触发任何回调）
-                if (wantDialog) {
-                    setTimeout(() => done('cancelled'), 2500);
-                }
             } catch (e) {
                 anchorFallback();
             }
@@ -597,22 +592,19 @@
             transition:width 260ms cubic-bezier(0.16,1,0.3,1),
                 padding 260ms cubic-bezier(0.16,1,0.3,1),
                 border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
-        /* 下载中：整个面板最外层一圈旋转光环。
-           光环是挂在 body 下的独立 fixed 元素（不是面板子元素），位置尺寸
-           由 JS 同步。这样绝不受面板堆叠上下文影响——放面板内部时，
-           半透明 .body 会把光环透遮掉，或实心渐变反过来从面板内部
-           透出来糊成大色块（均用户截图佐证）。
-           样式全部内联设置（不依赖 CSS 类），因为 CSS 的 opacity:0 基线
-           在 .on 类切换不可靠时会导致光环永久不可见（实测过）。 */
-        #dlr-ring{position:fixed;pointer-events:none;z-index:1000000}
-        /* 旋转弧：经典 spinner 写法——只有 border 的两条边着色，
-           旋转时看到一道弧沿圆周跑；中间永远不涂任何颜色，
-           杜绝 conic 渐变涂满面板内部再现蓝色大色块（用户截图佐证）。 */
-        #dlr-ring::after{content:'';position:absolute;inset:-3px;
-            border:3px solid transparent;border-top-color:#9db8ff;
-            border-left-color:rgba(61,110,255,.85);border-radius:inherit;
-            animation:dlrRing 1.1s linear infinite}
-        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        /* 下载中：整个面板最外层一圈流动的渐变光带。
+           用 SVG 圆角矩形路径 + stroke-dash 动画，而不是旋转 border——
+           非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转。
+           颜色与 3s 慢速取自参考站 web-motion-showcase 的 Border Beam：
+           conic 渐变 transparent→蓝→#38bdf8→#ec4899，3s linear infinite。 */
+        #dlr-ring{position:fixed;pointer-events:none;z-index:1000000;overflow:visible;
+            opacity:0;transition:opacity 400ms ease-out}
+        #dlr-ring.on{opacity:1}
+        #dlr-ring .ring-track{fill:none;stroke:rgba(61,110,255,.28);stroke-width:3}
+        #dlr-ring .ring-beam{fill:none;stroke-width:3.5;stroke-linecap:round;
+            filter:drop-shadow(0 0 5px rgba(61,110,255,.85));
+            animation:dlrRingDash 3s linear infinite}
+        @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:-400}}
         #dlr-panel .body{display:block;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
@@ -713,7 +705,7 @@
         /* 尊重系统「减少动态效果」 */
         @media (prefers-reduced-motion:reduce){
             #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
-            #dlr-ring{animation:none}
+            #dlr-ring .ring-beam{animation:none !important}
         }
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
         #dlr-panel.frost .body{background:rgba(22,24,29,.72);border-color:rgba(255,255,255,.09);
@@ -765,7 +757,6 @@
                 <input type="number" id="dlr-retry" min="1" max="10" value="3">
             </div>
             <div class="row">
-                <label class="chk"><input type="checkbox" id="dlr-remember">记住保存路径</label>
                 <label class="chk"><input type="checkbox" id="dlr-stamp">文件名加时间戳</label>
                 <label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label>
             </div>
@@ -1010,17 +1001,12 @@
 
             progressSet(P.save, '保存');
             appendLog('⑥ 保存文件 ...');
-            const dlResult = await downloadBlob(blob, outName, opts.remember);
-            if (dlResult === 'cancelled') {
-                setStatus('已取消保存（未写入文件），可重新点下载。');
-                progressDone(false);
-                return;
-            }
+            await downloadBlob(blob, outName);
             // MP4 直接在面板内预览（TS 浏览器无法解码，不预览）
             if (wantMp4) {
                 try { showPreview(blob, outName); } catch (e) { /* 预览失败不影响下载 */ }
             }
-            setStatus('✅ 完成：' + outName);
+            setStatus('✅ 完成：' + outName + '（已存入浏览器默认下载文件夹）');
             progressDone(true);
         } catch (err) {
             setStatus('❌ 失败：' + err.message, true);
@@ -1033,33 +1019,51 @@
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
         document.body.appendChild(panel);
-        // 下载光环是独立 fixed 层，挂在 body 下而非面板内部，
+        // 下载光环是独立 SVG 层，挂在 body 下而非面板内部，
         // 避免面板的堆叠上下文/半透明背景影响光环渲染
-        const ring = document.createElement('div');
+        const NS = 'http://www.w3.org/2000/svg';
+        const ring = document.createElementNS(NS, 'svg');
         ring.id = 'dlr-ring';
+        const ringGrad = document.createElementNS(NS, 'linearGradient');
+        ringGrad.setAttribute('id', 'dlrBeamGrad');
+        ringGrad.setAttribute('x1', '0'); ringGrad.setAttribute('y1', '0');
+        ringGrad.setAttribute('x2', '1'); ringGrad.setAttribute('y2', '1');
+        [['0', '#3d6eff'], ['0.5', '#38bdf8'], ['1', '#ec4899']].forEach(([o, c]) => {
+            const s = document.createElementNS(NS, 'stop');
+            s.setAttribute('offset', o); s.setAttribute('stop-color', c);
+            ringGrad.appendChild(s);
+        });
+        const ringTrack = document.createElementNS(NS, 'rect');
+        ringTrack.setAttribute('class', 'ring-track');
+        const ringBeam = document.createElementNS(NS, 'rect');
+        ringBeam.setAttribute('class', 'ring-beam');
+        ringBeam.setAttribute('stroke', 'url(#dlrBeamGrad)');
+        ringBeam.setAttribute('pathLength', '400');
+        ringBeam.setAttribute('stroke-dasharray', '110 290');
+        ring.appendChild(ringGrad);
+        ring.appendChild(ringTrack);
+        ring.appendChild(ringBeam);
         document.body.appendChild(ring);
-        // 光环跟随面板的位置和尺寸（含圆角）
+        // 光环跟随面板的位置和尺寸（含圆角）——SVG rect 几何
         const syncRing = () => {
             const r = panel.getBoundingClientRect();
+            const W = r.width + 6, H = r.height + 6;
             ring.style.left = (r.left - 3) + 'px';
             ring.style.top = (r.top - 3) + 'px';
-            ring.style.width = (r.width + 6) + 'px';
-            ring.style.height = (r.height + 6) + 'px';
-            ring.style.borderRadius = (panel.classList.contains('mini') ? 999 : 15) + 'px';
+            ring.setAttribute('width', W);
+            ring.setAttribute('height', H);
+            const rx = Math.min(15, W / 2, H / 2);
+            [ringTrack, ringBeam].forEach(el => {
+                el.setAttribute('x', 2); el.setAttribute('y', 2);
+                el.setAttribute('width', Math.max(0, W - 4));
+                el.setAttribute('height', Math.max(0, H - 4));
+                el.setAttribute('rx', rx);
+            });
         };
         syncRing();
-        // 光环显隐：用内联 border/box-shadow 直接控制（不依赖 CSS 类切换）
-        const ringHide = () => {
-            ring.style.border = 'none';
-            ring.style.boxShadow = 'none';
-            ring.style.opacity = '0';
-        };
-        const ringShow = () => {
-            ring.style.border = '3px solid rgba(61,110,255,.75)';
-            ring.style.boxShadow = '0 0 14px 2px rgba(61,110,255,.45)';
-            ring.style.opacity = '1';
-            syncRing();
-        };
+        // 光环显隐：用 .on 类切换（SVG 无 border，改由 CSS opacity 控制）
+        const ringHide = () => { ring.classList.remove('on'); };
+        const ringShow = () => { ring.classList.add('on'); syncRing(); };
         ringHide();
         // 收缩/展开动画期间逐帧同步（只在光环可见时跑）
         let ringRaf = 0;
@@ -1067,7 +1071,7 @@
             syncRing();
             ringRaf = requestAnimationFrame(ringAnimLoop);
         };
-        const ringAnimStart = () => { if (!ringRaf && ring.style.opacity === '1') ringAnimLoop(); };
+        const ringAnimStart = () => { if (!ringRaf && ring.classList.contains('on')) ringAnimLoop(); };
         const ringAnimStop = () => { if (ringRaf) { cancelAnimationFrame(ringRaf); ringRaf = 0; } };
         panel.addEventListener('transitionstart', ringAnimStart);
         panel.addEventListener('transitionend', ringAnimStop);
@@ -1149,9 +1153,8 @@
             miniState = v;
             try { GM_setValue('dlr_mini', v); } catch (e) {}
             applyMini();
-            // 光环跟随面板圆角变化
-            const ring = document.getElementById('dlr-ring');
-            if (ring) ring.style.borderRadius = (v ? 999 : 15) + 'px';
+            // 光环跟随面板尺寸/圆角变化（收缩时 rx 要变大成药丸）
+            if (typeof syncRing === 'function') syncRing();
         };
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
@@ -1180,7 +1183,6 @@
                 fmt: $('dlr-fmt').value,
                 threads: Math.max(1, Math.min(16, parseInt($('dlr-thread').value, 10) || 5)),
                 retry: Math.max(1, Math.min(10, parseInt($('dlr-retry').value, 10) || 3)),
-                remember: $('dlr-remember').checked,
                 stamp: $('dlr-stamp').checked,
                 clipFrom,
                 clipTo,
