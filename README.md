@@ -11,7 +11,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.6.7）
+## 功能（v1.6.8）
 
 **核心**
 
