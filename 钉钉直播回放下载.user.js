@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.1
+// @version      1.6.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -901,12 +901,14 @@
             logBuffer.length = 0;
         }
 
-        // 毛玻璃：开关状态持久化，刷新后保留
+        // 毛玻璃：默认开启，开关状态持久化，刷新后保留
         const frost = $('dlr-frost');
         try {
             const saved = GM_getValue('dlr_frost');
-            if (saved !== undefined && saved !== null) frost.checked = !!saved;
-        } catch (e) {}
+            frost.checked = (saved === undefined || saved === null) ? true : !!saved;
+        } catch (e) {
+            frost.checked = true;
+        }
         const applyFrost = () => {
             panel.classList.toggle('frost', frost.checked);
             try { GM_setValue('dlr_frost', frost.checked); } catch (e) {}

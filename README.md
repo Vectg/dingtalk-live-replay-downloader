@@ -29,7 +29,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 **面板外观**
 
-- **毛玻璃**：勾选「毛玻璃」后面板变为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态用 `GM_setValue` 持久化，刷新后保留。不勾选时为不透明深色背景，无模糊开销。
+- **毛玻璃**：默认开启。面板为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；不想模糊就取消勾选「毛玻璃」，状态用 `GM_setValue` 持久化，刷新后保留。
 - **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼。
 
 **协议兼容**
