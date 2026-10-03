@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.7.0
+// @version      1.7.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -589,9 +589,9 @@
         #dlr-panel{position:fixed;right:16px;bottom:16px;z-index:999999;
             width:392px;padding:14px 16px;margin:0;border:0;background:transparent;box-shadow:none;
             border-radius:12px;
-            transition:width 260ms cubic-bezier(0.16,1,0.3,1),
-                padding 260ms cubic-bezier(0.16,1,0.3,1),
-                border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+            transition:width 280ms cubic-bezier(0.16,1,0.3,1),
+                padding 280ms cubic-bezier(0.16,1,0.3,1),
+                border-radius 280ms cubic-bezier(0.16,1,0.3,1)}
         /* 下载中：整个面板最外层一圈流动的渐变光带。
            用 SVG 圆角矩形路径 + stroke-dash 动画，而不是旋转 border——
            非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转。
@@ -605,15 +605,23 @@
             filter:drop-shadow(0 0 5px rgba(61,110,255,.85));
             animation:dlrRingDash 3s linear infinite}
         @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:-400}}
-        #dlr-panel .body{display:block;position:relative;z-index:1;width:100%;overflow:hidden;
+        #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
             box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.03);
             padding:14px 16px;
-            transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
-                border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+            transition:grid-template-rows 280ms cubic-bezier(0.16,1,0.3,1),
+                opacity 200ms cubic-bezier(0.4,0,0.2,1),
+                padding 280ms cubic-bezier(0.16,1,0.3,1),
+                border-width 280ms cubic-bezier(0.16,1,0.3,1),
+                border-radius 280ms cubic-bezier(0.16,1,0.3,1),
+                width 280ms cubic-bezier(0.16,1,0.3,1)}
+        /* 内容包裹层：grid-template-rows 从 1fr → 0fr 才能把 auto 高度平滑补间到 0 */
+        #dlr-panel .bin{overflow:hidden;min-height:0;min-width:0}
         #dlr-panel.frost .body{backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
-        #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px}
+        #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px;
+            /* 右侧让开绝对定位的「收起」按钮（约 42px 宽 + 8px 边距），避免标题被盖住 */
+            padding-right:58px}
         #dlr-panel .sub{font-size:11px;color:#7d828d;margin-bottom:10px}
         #dlr-panel .sec{border-top:1px solid #23262e;padding-top:8px;margin-top:8px}
         #dlr-panel .sec:first-of-type{border-top:0;padding-top:0;margin-top:0}
@@ -658,9 +666,9 @@
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
         /* 收缩态：只显示一个小药丸图标（宽度 50px 为定值，可与展开态 392px 直接补间） */
         #dlr-panel.mini{width:50px;padding:0;border-radius:999px}
-        #dlr-panel.mini .body{width:50px;height:0;border-radius:999px;
-            padding:0;border-width:0;overflow:visible;opacity:0;visibility:hidden;
-            background:rgba(22,24,29,.85)}
+        #dlr-panel.mini .body{width:50px;border-radius:999px;
+            background:rgba(22,24,29,.85);
+            grid-template-rows:0fr;opacity:0;padding:0;border-width:0;pointer-events:none}
         #dlr-panel.mini .expand{padding:8px 13px;font-size:12px}
         #dlr-panel.mini .expand .lb{display:none}
         #dlr-panel.mini.frost .body{background:rgba(22,24,29,.55)}
@@ -675,9 +683,7 @@
         #dlr-panel.mini .expand{display:flex}
         /* 收缩态：展开按钮淡入，内容淡出 */
         #dlr-panel.mini .expand{opacity:1}
-        /* 收缩态内容淡出（宽度由面板补间，body 同步收窄） */
-        #dlr-panel .body{transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
-            border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+        /* 收缩态内容淡出 + 高度折叠（单一过渡曲线，宽高同步，避免内容硬塌） */
         /* 收缩按钮（展开态右上角） */
         #dlr-panel .collapse{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.06);
             color:#9aa0ab;border:1px solid #2c303a;border-radius:5px;padding:1px 8px;
@@ -688,11 +694,6 @@
             font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
         #dlr-panel .foot a{color:#7d828d;text-decoration:none}
         #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
-        /* 收起/展开：内容淡出并塌缩，杜绝内容瞬切造成「崩」的观感 */
-        #dlr-panel .body{transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
-            height 260ms cubic-bezier(0.16,1,0.3,1), padding 260ms cubic-bezier(0.16,1,0.3,1),
-            border-radius 260ms cubic-bezier(0.16,1,0.3,1), visibility 0s linear 260ms}
-        #dlr-panel.mini .body{opacity:0;pointer-events:none}
         #dlr-panel .collapse{transition:opacity 150ms ease-out}
         #dlr-panel.mini .collapse{opacity:0}
         #dlr-panel.mini .expand .ic{
@@ -726,6 +727,7 @@
         <div class="expand" title="展开面板"><span class="ic">⬇</span><span class="lb">钉钉直播回放下载</span></div>
         <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
+        <div class="bin">
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
         <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div></div>
@@ -770,6 +772,7 @@
             <span style="color:#3a3f4b">·</span>
             <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
             <button id="dlr-update" title="从 GitHub 拉取最新版">检查更新</button>
+        </div>
         </div>
         </div>
     `;
