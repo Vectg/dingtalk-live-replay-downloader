@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.6.6
+// @version      1.6.7
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -159,32 +159,40 @@
 
     // 勾选「记住保存路径」后，第一次弹框，之后静默存到默认下载目录
     let saveAsDone = false;
+    // GM_download 在用户「取消」保存对话框时不会触发任何回调，故加超时判定为已取消
     function downloadBlob(blob, filename, rememberPath) {
         return new Promise((resolve, reject) => {
             const url = URL.createObjectURL(blob);
             let fellBack = false;
+            let settled = false;
+            const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+            const fail = (e) => { if (!settled) { settled = true; reject(e); } };
             function cleanup() { setTimeout(() => URL.revokeObjectURL(url), 15000); }
             function anchorFallback() {
                 const a = document.createElement('a');
                 a.href = url; a.download = filename;
                 document.body.appendChild(a); a.click(); a.remove();
                 cleanup();
-                setTimeout(resolve, 300);
+                setTimeout(() => done('saved'), 300);
             }
             const wantDialog = !(rememberPath && saveAsDone);
             try {
                 GM_download({
                     url, name: filename, saveAs: wantDialog,
-                    onload: () => { saveAsDone = true; cleanup(); resolve(); },
+                    onload: () => { saveAsDone = true; cleanup(); done('saved'); },
                     onerror: (e) => {
                         if (!fellBack) { fellBack = true; anchorFallback(); }
-                        else reject(new Error('保存失败 ' + (e && e.error ? e.error : '')));
+                        else fail(new Error('保存失败 ' + (e && e.error ? e.error : '')));
                     },
                     ontimeout: () => {
                         if (!fellBack) { fellBack = true; anchorFallback(); }
-                        else reject(new Error('保存超时'));
+                        else fail(new Error('保存超时'));
                     },
                 });
+                // 弹框模式下若一直无回调，视为用户取消了保存对话框（油猴取消时不触发任何回调）
+                if (wantDialog) {
+                    setTimeout(() => done('cancelled'), 2500);
+                }
             } catch (e) {
                 anchorFallback();
             }
@@ -583,11 +591,29 @@
 
     // ---------- UI ----------
     GM_addStyle(`
-        #dlr-panel{position:fixed;right:16px;bottom:16px;z-index:999999;width:392px;
+        #dlr-panel{position:fixed;right:16px;bottom:16px;z-index:999999;
+            width:392px;padding:14px 16px;margin:0;border:0;background:transparent;box-shadow:none;
+            border-radius:12px;
+            transition:width 260ms cubic-bezier(0.16,1,0.3,1),
+                padding 260ms cubic-bezier(0.16,1,0.3,1),
+                border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+        /* 下载中：整个面板最外层一圈旋转光环（收缩成药丸时同样包住） */
+        #dlr-ring{position:absolute;left:-4px;top:-4px;right:-4px;bottom:-4px;
+            border-radius:16px;pointer-events:none;opacity:0;z-index:0;
+            background:conic-gradient(from 0deg,#3d6eff,transparent 25%,transparent 65%,#3d6eff);
+            animation:dlrRing 1.1s linear infinite;
+            transition:opacity 200ms ease-out, border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+        #dlr-ring.on{opacity:1}
+        #dlr-panel.mini #dlr-ring{border-radius:999px}
+        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        #dlr-panel .body{display:block;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
             box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.03);
-            padding:14px 16px}
+            padding:14px 16px;
+            transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
+                border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
+        #dlr-panel.frost .body{backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px}
         #dlr-panel .sub{font-size:11px;color:#7d828d;margin-bottom:10px}
         #dlr-panel .sec{border-top:1px solid #23262e;padding-top:8px;margin-top:8px}
@@ -631,27 +657,28 @@
         #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
         #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
-        /* 收缩态：只显示一个小药丸图标 */
-        #dlr-panel.mini{width:auto;max-width:200px;padding:0;border-radius:999px;overflow:hidden;
+        /* 收缩态：只显示一个小药丸图标（宽度 50px 为定值，可与展开态 392px 直接补间） */
+        #dlr-panel.mini{width:50px;padding:0;border-radius:999px}
+        #dlr-panel.mini .body{width:50px;height:0;border-radius:999px;
+            padding:0;border-width:0;overflow:visible;opacity:0;visibility:hidden;
             background:rgba(22,24,29,.85)}
-        #dlr-panel.mini .expand{padding:7px 13px;font-size:12px}
+        #dlr-panel.mini .expand{padding:8px 13px;font-size:12px}
         #dlr-panel.mini .expand .lb{display:none}
-        #dlr-panel.mini.frost{background:rgba(22,24,29,.55)}
-        /* 收缩态隐藏一切非展开条元素：用 !important 压过 JS 动态写入的内联样式 */
-        #dlr-panel.mini .collapse,
-        #dlr-panel.mini h3,
-        #dlr-panel.mini .sec,#dlr-panel.mini .sub,
-        #dlr-panel.mini #dlr-progress,#dlr-panel.mini #dlr-status,
-        #dlr-panel.mini #dlr-preview,#dlr-panel.mini #dlr-preview *,
-        #dlr-panel.mini .tip,#dlr-panel.mini .foot{display:none !important}
-        #dlr-panel.mini .expand{display:flex}
+        #dlr-panel.mini.frost .body{background:rgba(22,24,29,.55)}
         /* 展开态：默认隐藏展开按钮 */
         #dlr-panel .expand{display:none;align-items:center;gap:7px;cursor:pointer;
-            padding:8px 14px;color:#d7d9de;font-size:12px;user-select:none}
+            padding:8px 14px;color:#d7d9de;font-size:12px;user-select:none;
+            opacity:0;transition:opacity 200ms ease-out}
         #dlr-panel .expand .ic{width:22px;height:22px;border-radius:50%;background:#3d6eff;
             color:#fff;display:flex;align-items:center;justify-content:center;
             font-size:12px;font-weight:700;flex:none}
         #dlr-panel .expand:hover{background:rgba(255,255,255,.05)}
+        #dlr-panel.mini .expand{display:flex}
+        /* 收缩态：展开按钮淡入，内容淡出 */
+        #dlr-panel.mini .expand{opacity:1}
+        /* 收缩态内容淡出（宽度由面板补间，body 同步收窄） */
+        #dlr-panel .body{transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
+            border-radius 260ms cubic-bezier(0.16,1,0.3,1)}
         /* 收缩按钮（展开态右上角） */
         #dlr-panel .collapse{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.06);
             color:#9aa0ab;border:1px solid #2c303a;border-radius:5px;padding:1px 8px;
@@ -662,23 +689,16 @@
             font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
         #dlr-panel .foot a{color:#7d828d;text-decoration:none}
         #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
-        /* 下载中：整个面板最外层一圈旋转光环（收缩成药丸时同样包住） */
-        #dlr-panel{position:fixed}
-        #dlr-panel::before{content:'';position:absolute;inset:-3px;border-radius:14px;z-index:-1;
-            pointer-events:none;opacity:0;
-            background:conic-gradient(from 0deg,#3d6eff,transparent 25%,transparent 65%,#3d6eff);
-            animation:dlrRing 1.1s linear infinite}
-        #dlr-panel.mini::before{border-radius:999px}
-        #dlr-panel.dling::before{opacity:1}
-        @keyframes dlrRing{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        /* 收起/展开过渡（取自动效规范：快速 150ms / 弹簧缓出 400ms） */
-        #dlr-panel{transition:width 280ms cubic-bezier(0.16,1,0.3,1),
-            padding 280ms cubic-bezier(0.16,1,0.3,1),
-            border-radius 280ms cubic-bezier(0.16,1,0.3,1),
-            background-color 200ms ease-out}
-        #dlr-panel.mini{width:50px !important}
+        /* 收起/展开：内容淡出并塌缩，杜绝内容瞬切造成「崩」的观感 */
+        #dlr-panel .body{transition:opacity 150ms ease-out, width 260ms cubic-bezier(0.16,1,0.3,1),
+            height 260ms cubic-bezier(0.16,1,0.3,1), padding 260ms cubic-bezier(0.16,1,0.3,1),
+            border-radius 260ms cubic-bezier(0.16,1,0.3,1), visibility 0s linear 260ms}
+        #dlr-panel.mini .body{opacity:0;pointer-events:none}
         #dlr-panel .collapse{transition:opacity 150ms ease-out}
         #dlr-panel.mini .collapse{opacity:0}
+        #dlr-panel.mini .expand .ic{
+            transition:transform 220ms cubic-bezier(0.16,1,0.3,1)}
+        #dlr-panel.mini .expand:hover .ic{transform:scale(1.12)}
         /* 按压触觉反馈 */
         #dlr-panel button:active{transform:scale(0.97)}
         #dlr-panel button{transition:background-color 150ms cubic-bezier(0.4,0,0.2,1),
@@ -686,11 +706,10 @@
         /* 尊重系统「减少动态效果」 */
         @media (prefers-reduced-motion:reduce){
             #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
-            #dlr-panel::before{animation:none}
+            #dlr-ring{animation:none}
         }
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
-        #dlr-panel.frost{background:rgba(22,24,29,.72);-webkit-backdrop-filter:blur(14px) saturate(150%);
-            backdrop-filter:blur(14px) saturate(150%);border-color:rgba(255,255,255,.09);
+        #dlr-panel.frost .body{background:rgba(22,24,29,.72);border-color:rgba(255,255,255,.09);
             box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07)}
         #dlr-panel.frost input[type=text],#dlr-panel.frost input[type=number],
         #dlr-panel.frost select,#dlr-panel.frost #dlr-status,#dlr-panel.frost #dlr-progress{
@@ -701,10 +720,13 @@
 
     const panel = document.createElement('div');
     panel.id = 'dlr-panel';
+    panel.className = 'wrap';
     // 注意：不要给 panel 设 position:relative 内联样式——会覆盖 CSS 的 position:fixed，
     // 导致面板掉进文档流（跑到页面左下角）。position:fixed 本身已足以作为收缩按钮的定位参照。
     panel.innerHTML = `
+        <div id="dlr-ring"></div>
         <div class="expand" title="展开面板"><span class="ic">⬇</span><span class="lb">钉钉直播回放下载</span></div>
+        <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
@@ -751,6 +773,7 @@
             <span style="color:#3a3f4b">·</span>
             <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
             <button id="dlr-update" title="从 GitHub 拉取最新版">检查更新</button>
+        </div>
         </div>
     `;
 
@@ -828,6 +851,8 @@
         p.querySelector('.pct').textContent = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
         panel.classList.add('dling');
+        const ring = document.getElementById('dlr-ring');
+        if (ring) ring.classList.add('on');
     }
     function progressSet(pct, label) {
         const p = $('dlr-progress');
@@ -841,6 +866,8 @@
         const s = $('dlr-spin');
         if (s) s.style.display = 'none';
         panel.classList.remove('dling');
+        const ring = document.getElementById('dlr-ring');
+        if (ring) ring.classList.remove('on');
         if (!p) return;
         if (ok) {
             progressSet(100, '完成');
@@ -979,7 +1006,12 @@
 
             progressSet(P.save, '保存');
             appendLog('⑥ 保存文件 ...');
-            await downloadBlob(blob, outName, opts.remember);
+            const dlResult = await downloadBlob(blob, outName, opts.remember);
+            if (dlResult === 'cancelled') {
+                setStatus('已取消保存（未写入文件），可重新点下载。');
+                progressDone(false);
+                return;
+            }
             // MP4 直接在面板内预览（TS 浏览器无法解码，不预览）
             if (wantMp4) {
                 try { showPreview(blob, outName); } catch (e) { /* 预览失败不影响下载 */ }
@@ -1062,6 +1094,7 @@
         });
 
         // 收缩 / 展开：不用时缩成一个小图标，状态持久化
+        // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
         const applyMini = () => panel.classList.toggle('mini', miniState);
         let miniState = false;
         try {
