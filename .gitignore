@@ -1,0 +1,23 @@
+# 依赖 & 构建产物
+node_modules/
+dist/
+build/
+
+# 临时下载的切片/中间文件
+ts*/
+*.ts
+*.m3u8
+concat*.txt
+*.flv
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.idea/
+.vscode/
+
+# 平台
+.ohmyagent/
+.monkeycode/
