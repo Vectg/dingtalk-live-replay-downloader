@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.8
+// @version      1.9.9
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -12,6 +12,7 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_notification
 // @connect      *
 // @connect      lv.dingtalk.com
 // @connect      dtliving-sz.dingtalk.com
@@ -36,6 +37,15 @@
         try { return (GM_info && GM_info.script && GM_info.script.version) || '未知'; }
         catch (e) { return '未知'; }
     })();
+
+    // 通知开关初值；面板初始化时由 GM_getValue 覆盖。默认值与 bindChk 一致：
+    // 系统通知开（无声可靠），提示音关（自动播放策略常拦，容易让人以为坏了）。
+    // 做成 setter 而不是裸变量：notify/beep 被单元测试抽出单独执行时，
+    // 闭包外的模块变量不在作用域内，必须有个显式注入点才能测。
+    let notifyFlags = { desktop: true, sound: false };
+    function setNotifyFlags(desktop, sound) {
+        notifyFlags = { desktop: !!desktop, sound: !!sound };
+    }
 
     // ---------- 日志：面板挂载前的日志先缓存，避免静默丢失 ----------
     const logBuffer = [];
@@ -223,6 +233,75 @@
                 anchorFallback();
             }
         });
+    }
+
+    // ---------- 完成/失败通知（系统通知 + 提示音） ----------
+    // 提示音用 WebAudio 现场合成，不带 @resource 音频文件：少一个外部依赖，
+    // 也不会因为 CDN 挂了就静音。浏览器自动播放策略会拦未交互页面的出声，
+    // 所以 AudioContext 要在用户点击「下载」时预热（见 primeNotifyAudio）。
+    // audioCtx 走 getter/setter 而不是裸 let：单元测试把这些函数从 IIFE 里抽出来
+    // 单独执行时，闭包外的变量不在作用域内，裸 let 会直接 ReferenceError；
+    // 有 setter 才能注入一个假 AudioContext 测出「完成 2 声 / 失败 3 声」。
+    let _audioCtx = null;
+    function getAudioCtx() { return _audioCtx; }
+    function setAudioCtx(ctx) { _audioCtx = ctx; }
+    function primeNotifyAudio() {
+        if (!notifyFlags.sound) return;
+        try {
+            if (!_audioCtx) {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (!AC) return;
+                _audioCtx = new AC();
+            }
+            if (_audioCtx.state === 'suspended') _audioCtx.resume();
+        } catch (e) { /* 用户点过下载仍失败就静音，不影响下载 */ }
+    }
+    // times 里的数字直接是半音偏移（相对 C5），正数上行、负数下行：
+    // 完成传 [0, 4]（C5→E5 上行两声），失败传 [0, -3, -7]（下行三声）。
+    // 音量刻意压低（0.16）避免突兀。
+    function beep(times, type) {
+        if (!notifyFlags.sound) return;
+        try {
+            primeNotifyAudio();
+            if (!_audioCtx || _audioCtx.state !== 'running') return;
+            const now = _audioCtx.currentTime;
+            times.forEach((semi, i) => {
+                const osc = _audioCtx.createOscillator();
+                const gain = _audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.value = 523.25 * Math.pow(2, semi / 12);
+                const t0 = now + i * 0.16;
+                gain.gain.setValueAtTime(0.0001, t0);
+                gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+                osc.connect(gain); gain.connect(_audioCtx.destination);
+                osc.start(t0); osc.stop(t0 + 0.15);
+            });
+        } catch (e) { }
+    }
+    // text 只在通知里带一句结论，不塞整段错误详情（系统通知宽度有限，
+    // 完整信息仍以面板历史为准）。onclick 让用户点通知能聚焦面板。
+    function notify(title, text, ok) {
+        try { beep(ok ? [0, 4] : [0, -3, -7], ok ? 'sine' : 'triangle'); }
+        catch (e) { }
+        if (!notifyFlags.desktop) return;
+        try {
+            if (typeof GM_notification === 'function') {
+                GM_notification({
+                    title: title,
+                    text: text,
+                    timeout: 8000,
+                    onclick: () => { try { window.focus(); } catch (e) { } },
+                });
+                return;
+            }
+        } catch (e) { }
+        // 油猴未注入 GM_notification（极少见）时退回浏览器原生通知
+        try {
+            if (typeof Notification === 'undefined') return;
+            if (Notification.permission === 'granted') new Notification(title, { body: text });
+            else if (Notification.permission !== 'denied') Notification.requestPermission().catch(() => { });
+        } catch (e) { }
     }
 
     // ---------- mux.js 懒加载（不再 @require，避免启动依赖外部 CDN） ----------
@@ -477,7 +556,7 @@
                 pendingRange = {
                     length: parseInt(at >= 0 ? raw.slice(0, at) : raw, 10) || 0,
                     offset: at >= 0 ? (parseInt(raw.slice(at + 1), 10) || 0) : null,
-                };
+            };
                 continue;
             }
             if (line.startsWith('#EXT-X-KEY:')) {
@@ -543,7 +622,7 @@
             initSegment: withMap ? withMap.map : null,
             totalDur,
             variants: [],
-        };
+            };
     }
 
     // ---------- 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确） ----------
@@ -597,7 +676,7 @@
         return {
             segs: kept,
             range: { from: fromS, to: toS, first: kept[0].start, last: kept[kept.length - 1].start + (kept[kept.length - 1].dur || 0), clamped },
-        };
+            };
     }
 
     function fmtTime(s) {
@@ -915,6 +994,8 @@
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label></div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败时通知我</label></div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败时提示音</label></div>
                 <div class="tip">预取播放地址与切片索引，打开页面后无需等待即可直接下载。</div>
             </div></div>
         </div>
@@ -1012,7 +1093,7 @@
                 req.onupgradeneeded = () => {
                     const db = req.result;
                     if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
-                };
+            };
                 req.onsuccess = () => { idbDb = req.result; res(idbDb); };
                 req.onerror = () => { idbBroken = true; res(null); };
                 req.onblocked = () => { idbBroken = true; res(null); };
@@ -1122,7 +1203,7 @@
             const v = (nal[bit >> 3] >> (7 - (bit & 7))) & 1;
             bit++;
             return v;
-        };
+            };
         const getBits = (n) => { let v = 0; for (let i = 0; i < n; i++) v = (v << 1) | getBit(); return v; };
         const ue = () => { let z = 0; while (getBit() === 0) z++; if (z > 31) throw new Error('ue 异常'); return (1 << z) - 1 + getBits(z); };
         const se = () => { const v = ue(); return (v & 1) ? (v + 1) / 2 : -(v / 2); };
@@ -1536,9 +1617,13 @@
             }
             setStatus('✅ 完成：' + outName + '（已存入浏览器默认下载文件夹）');
             progressDone(true);
+            notify('钉钉回放下载完成', outName + ' · ' + fmtBytes(blob.size), true);
         } catch (err) {
             setStatus('❌ 失败：' + err.message, true);
             progressDone(false);
+            // 失败通知正文压到一行：系统通知窗口窄，整段错误详情留给面板历史
+            const brief = String(err.message || '').split('\n')[0];
+            notify('钉钉回放下载失败', brief.length > 120 ? brief.slice(0, 120) + '…' : brief, false);
         } finally {
             goBtn.disabled = false;
         }
@@ -1587,7 +1672,7 @@
                 el.setAttribute('height', Math.max(0, H - 4));
                 el.setAttribute('rx', rx);
             });
-        };
+            };
         syncRing();
         // 光环显隐：用 .on 类切换（SVG 无 border，改由 CSS opacity 控制）
         const ringHide = () => { ring.classList.remove('on'); };
@@ -1598,7 +1683,7 @@
         const ringAnimLoop = () => {
             syncRing();
             ringRaf = requestAnimationFrame(ringAnimLoop);
-        };
+            };
         const ringAnimStart = () => { if (!ringRaf && ring.classList.contains('on')) ringAnimLoop(); };
         const ringAnimStop = () => { if (ringRaf) { cancelAnimationFrame(ringRaf); ringRaf = 0; } };
         panel.addEventListener('transitionstart', ringAnimStart);
@@ -1629,7 +1714,7 @@
         const setMore = (open) => {
             moreT.setAttribute('aria-expanded', open ? 'true' : 'false');
             moreB.classList.toggle('open', open);
-        };
+            };
         moreT.addEventListener('click', () =>
             setMore(moreT.getAttribute('aria-expanded') !== 'true'));
 
@@ -1645,7 +1730,7 @@
                 el.value = n;
                 try { GM_setValue(key, n); } catch (e) { }
             });
-        };
+            };
         const bindChk = (id, key, def) => {
             const el = $(id);
             try { const v = GM_getValue(key); el.checked = (v === undefined || v === null) ? def : !!v; }
@@ -1654,7 +1739,7 @@
                 try { GM_setValue(key, el.checked); } catch (e) { }
             });
             return el;
-        };
+            };
         // 并发自动识别：网络 IO 密集，按 CPU 逻辑核数 ×2 推算（4~16 封顶）；
         // 用户手动改过（dlr_thread 已持久化）则以保存值优先
         const autoThreads = Math.max(4, Math.min(16,
@@ -1668,6 +1753,19 @@
         }
         bindChk('dlr-stamp', 'dlr_stamp', false);
         const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
+        // 完成/失败通知：提示音默认关（浏览器自动播放策略常拦默认开的声音，
+        // 让人误以为坏了），系统通知默认开（无声、可靠、点一下能回面板）
+        bindChk('dlr-notify-desktop', 'dlr_notify_desktop', true);
+        bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
+        // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，
+        // 不跟着 DOM 走，否则用户改了开关要等下次下载才生效。
+        const notifyDeskChk = $('dlr-notify-desktop'), notifySndChk = $('dlr-notify-sound');
+        const syncNotifyFlags = () => {
+            setNotifyFlags(notifyDeskChk.checked, notifySndChk.checked);
+        };
+        notifyDeskChk.addEventListener('change', syncNotifyFlags);
+        notifySndChk.addEventListener('change', syncNotifyFlags);
+        syncNotifyFlags();
 
         // 分辨率：默认自动（原始=最高带宽）；预取后回填各档位，切换即重新预取
         const resSel = $('dlr-res');
@@ -1692,7 +1790,7 @@
                 resSel.appendChild(o);
             });
             resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
-        };
+            };
         resSel.addEventListener('change', () => {
             try { GM_setValue('dlr_res', resSel.value); } catch (e) { }
             // 切换分辨率 → 缓存键不同，直接重新预取，下载时秒用
@@ -1721,7 +1819,7 @@
                 : (prefetch.checked ? '回放标题解析中…' : '留空将使用回放标题');
             if (stampChk && stampChk.checked && title) ph += '_' + stamp();
             nameInp.placeholder = ph;
-        };
+            };
         nameInp.addEventListener('input', updateNameTip);
         prefetch.addEventListener('change', updateNameTip);
         if (stampChk) stampChk.addEventListener('change', updateNameTip);
@@ -1748,7 +1846,7 @@
         const setUpd = (text, cls) => {
             upd.textContent = text;
             upd.classList.toggle('found', !!cls);
-        };
+            };
         const fetchVer = (url) => new Promise((res, rej) => {
             GM_xmlhttpRequest({
                 url, method: 'GET',
@@ -1768,16 +1866,16 @@
             const m = txt.match(/@version\s+(\S+)/);
             if (!m) throw new Error('无法解析远程版本号');
             return m[1];
-        };
+            };
         const quietLog = (msg) => {
             const d = new Date(), p = (n) => String(n).padStart(2, '0');
             pushHistory(p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '  ' + msg);
-        };
+            };
         const showFound = (v) => {
             UPD.found = v;
             setUpd('发现新版 ' + v + ' ↑', true);
             upd.title = '发现新版 ' + v + '（当前 ' + VERSION + '），点击打开更新页';
-        };
+            };
         // 点击：空闲=检查；已发现新版=跳转下载页；检查中=忽略
         upd.addEventListener('click', async () => {
             if (UPD.busy) return;
@@ -1862,7 +1960,7 @@
             applyMini();
             // 光环跟随面板尺寸/圆角变化（收缩时 rx 要变大成药丸）
             if (typeof syncRing === 'function') syncRing();
-        };
+            };
         // 默认展开/收缩：决定下次打开页面时的初始状态；手动收起/展开也会同步该选项
         const miniDef = $('dlr-mini-def');
         // 下拉框直接反映上面算出的真实初始状态（与面板同源），不再自己另读一遍键
@@ -1910,6 +2008,9 @@
         });
 
         $('dlr-go').addEventListener('click', () => {
+            // 在用户手势内预热 AudioContext：否则下载完成时页面若已无交互，
+            // 浏览器自动播放策略会拦掉提示音（表现为「开了没声音」）
+            primeNotifyAudio();
             const raw = ($('dlr-url').value || '').trim() || location.href;
             let clipFrom = null, clipTo = null;
             try {

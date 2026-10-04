@@ -523,6 +523,116 @@ section('parseSpsToDims（H.264 SPS → 分辨率）');
     try { parseSpsToDims(makeSps(80, 271, 66, 40)); } catch (e) { msg = e.message; }
     ok(msg.includes('分辨率越界'), '高 4336（超上限 16px）被挡', msg);
 }
+
+// ---------------------------------------------------------------- 完成/失败通知
+// notify() 只依赖两个模块级开关，beep 内部依赖 AudioContext —— 都要能优雅降级。
+section('notify（完成/失败通知）');
+{
+    // 用一个假 AudioContext 验证：开关关闭时完全不碰音频；开启时按完成/失败
+    // 发出不同音数（完成 2 声上行、失败 3 声下行）。
+    function makeNotify(opts) {
+        // 开关通过 setNotifyFlags 注入（脚本里是闭包外的 notifyFlags 对象，
+        // 直接当参数注入遮蔽不了，必须把 setter 一起抽进来）
+        const { notify, beep, primeNotifyAudio, setNotifyFlags, setAudioCtx, getAudioCtx } = loadFns(
+            ['notify', 'beep', 'primeNotifyAudio', 'setNotifyFlags', 'setAudioCtx', 'getAudioCtx']
+        );
+        setNotifyFlags(opts.desktop, opts.sound);
+        return { notify, beep, primeNotifyAudio, setNotifyFlags, setAudioCtx, getAudioCtx };
+    }
+
+    // --- 提示音：开关关闭时不创建任何音频节点 ---
+    {
+        let madeNodes = 0;
+        const fakeAudioCtx = {
+            state: 'running',
+            currentTime: 0,
+            destination: {},
+            createOscillator: () => {
+                madeNodes++;
+                return {
+                    type: '', frequency: {},
+                    connect() { }, start() { }, stop() { },
+                };
+            },
+            createGain: () => ({
+                gain: { setValueAtTime() { }, exponentialRampToValueAtTime() { } },
+                connect() { },
+            }),
+        };
+        const { notify, setAudioCtx } = makeNotify({ desktop: false, sound: false });
+        setAudioCtx(fakeAudioCtx);   // 预置上下文，若开关真的生效就会被用到
+        notify('t', 'msg', true);
+        notify('t', 'msg', false);
+        eq(madeNodes, 0, '提示音关闭 → 不创建任何振荡器节点');
+    }
+
+    // --- 提示音开启：完成 2 声、失败 3 声，且频率上行/下行 ---
+    {
+        const made = [];
+        const fakeAudioCtx = {
+            state: 'running',
+            currentTime: 0,
+            destination: {},
+            createOscillator: () => {
+                const o = {
+                    type: '', freq: 0,
+                    frequency: { set value(v) { o.freq = v; } },
+                    connect() { }, start(t) { made.push({ freq: o.freq, start: t }); }, stop() { },
+                };
+                return o;
+            },
+            createGain: () => ({
+                gain: { setValueAtTime() { }, exponentialRampToValueAtTime() { } },
+                connect() { },
+            }),
+        };
+        const { notify, setAudioCtx } = makeNotify({ desktop: false, sound: true });
+        setAudioCtx(fakeAudioCtx);
+        made.length = 0;
+        notify('完成', 'x', true);
+        eq(made.length, 2, '完成 → 2 声');
+        ok(made[1].freq > made[0].freq, '完成提示音上行', made.map((m) => Math.round(m.freq)).join(' → '));
+        made.length = 0;
+        notify('失败', 'x', false);
+        eq(made.length, 3, '失败 → 3 声');
+        ok(made[1].freq < made[0].freq, '失败提示音下行', made.map((m) => Math.round(m.freq)).join(' → '));
+    }
+
+    // --- GM_notification 调用形态 ---
+    {
+        const seen = [];
+        const savedGM = global.GM_notification;
+        global.GM_notification = (o) => seen.push(o);
+        const savedN = global.Notification;
+        global.Notification = undefined;
+        try {
+            const { notify } = makeNotify({ desktop: true, sound: false });
+            notify('标题', '正文', true);
+            eq(seen.length, 1, '桌面通知开启 → 调用一次 GM_notification');
+            eq(seen[0].title, '标题', '通知标题透传');
+            eq(seen[0].text, '正文', '通知正文透传');
+            ok(typeof seen[0].onclick === 'function', '通知带 onclick（点通知能回面板）');
+            ok(seen[0].timeout > 0, '通知有自动消失时间');
+        } finally {
+            global.GM_notification = savedGM;
+            global.Notification = savedN;
+        }
+    }
+
+    // --- 桌面通知关闭 → 完全不通知 ---
+    {
+        let called = 0;
+        const savedGM = global.GM_notification;
+        global.GM_notification = () => { called++; };
+        try {
+            const { notify } = makeNotify({ desktop: false, sound: false });
+            notify('t', 'x', true);
+            eq(called, 0, '桌面通知关闭 → 不调用 GM_notification');
+        } finally {
+            global.GM_notification = savedGM;
+        }
+    }
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

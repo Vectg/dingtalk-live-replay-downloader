@@ -11,7 +11,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.9.8）
+## 功能（v1.9.9）
 
 **核心**
 
@@ -24,6 +24,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **进度动画**：进度条 + 状态栏完整显示（不裁字，可换行），实时显示当前阶段与 `n/N`。
 - **体积预估（v1.9.7）**：下载前用 `Range: bytes=0-0` 只拉首片 1 字节读 `Content-Range` 得单片总大小，`单片 × 片数` 得出总大小（不额外下载整片），解析阶段日志显示 `预计体积: 约 340 MB（单片 5.8 MB × 60 片）`；下载中进度条追加 `已下/预计` 字节数。探测失败时静默跳过，不影响下载。
 - **完整性校验（v1.9.7）**：全部切片下载后逐片校验——数量齐全、非空、TS 同步字节 188 周期对齐（在首 188 字节内找对齐点，兼容带 ID3/填充前缀的合法切片；HTML 错误页与截断数据会被识破）。通过则日志 `✅ 完整性校验通过：60/60 片 · 341.2 MB`；发现异常则**只把问题片置空、好片保留为断点缓存**，报出具体片号，点下载只补异常片，不用重下整个回放。
+- **完成/失败通知（v1.9.9）**：下载结束（成功保存、或失败报错）时可选弹系统通知——标题点明成功/失败，正文带文件名与体积（失败时带具体原因与建议，点击通知可回到面板）。提示音用 WebAudio 现场合成（完成两声上行、失败三声下行），不带外部音频文件。两个开关都在「更多设置」里：系统通知**默认开**，提示音**默认关**——浏览器自动播放策略常拦未交互页面的声音，默认开容易让人以为坏了；AudioContext 已在点「下载」时预热以绕过该策略。
 - **链接解析修复（v1.9.8）**：粘贴不带域名的裸查询串（`?roomId=…&liveUuid=…`）时不再报「链接缺少 roomId/liveUuid」——旧代码在回退拼接时会把开头的 `?` 再拼一个，导致参数名带上多余问号而取不到。
 
 **性能与预取**
@@ -129,7 +130,7 @@ node test/run.js
 
 测试不从副本跑：`test/extract.js` 直接从**已发布的 `钉钉直播回放下载.user.js`** 里按函数名抽取源码执行，所以测的就是用户真正装到 Tampermonkey 里的那份代码，不会出现「测试通过但发布出去是另一份实现」。抽取按花括号配平并跳过字符串/正则/注释，`test/run.js` 开头还会自检抽取结果是否完整可编译。
 
-覆盖范围：m3u8 解析（多码率选档 / AES-128 / `EXT-X-MAP` / `EXT-X-BYTERANGE` / 时间轴累加）、MP4 `fixMp4Duration`（哨兵 duration 修补，含 moof 缺失与已正常两种边界）、H.264 SPS 分辨率解析（Baseline / High 扩展路径 / `frame_cropping` / MBAFF / 上下限边界）、截取区间对齐、体积与时间格式化、版本比较、URL 解析。
+覆盖范围：m3u8 解析（多码率选档 / AES-128 / `EXT-X-MAP` / `EXT-X-BYTERANGE` / 时间轴累加）、MP4 `fixMp4Duration`（哨兵 duration 修补，含 moof 缺失与已正常两种边界）、H.264 SPS 分辨率解析（Baseline / High 扩展路径 / `frame_cropping` / MBAFF / 上下限边界）、截取区间对齐、体积与时间格式化、版本比较、URL 解析、完成/失败通知（开关语义、提示音上行/下行、`GM_notification` 调用形态）。
 
 GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、`test/run.js` 单元测试，以及 `test/version_guard.sh` —— 最后一项会在「改了 `.user.js` 却没 bump `@version`」时让 CI 失败（这个坑在 1.6.8 踩过一次：修复发布了，但版本号没涨，Tampermonkey 用户根本收不到更新）。
 
@@ -142,7 +143,7 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 - `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
 - 回放签名约 10 天有效，过期后重新点一次下载即可。
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
-- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住毛玻璃与收缩状态）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
+- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住毛玻璃、收缩状态与各项设置）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
 
 ---
 
