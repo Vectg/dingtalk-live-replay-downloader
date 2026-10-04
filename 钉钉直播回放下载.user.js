@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.3
+// @version      3.0.5
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1071,7 +1071,20 @@
         const dur = Number(totalDurSec);
         const has = isFinite(dur) && dur > 0;
         const unit = has && dur >= 3600 ? 'hh:mm:ss' : 'mm:ss';
-        return { unit: unit, capHint: has ? fmtTime(dur) : null };
+        // capHint 必须按**用户将要填的同一个 unit** 渲染，否则提示里的数字
+        // 照抄进输入框会得到另一个时刻。fmtTime() 对 >=1h 固定输出 h:mm:ss，
+        // 而 mm:ss 形态下总时长该写成 "01:30" / "90:00" 这种（分钟可以超过 59）。
+        // 注意 mm:ss 必须保留秒：90 秒要写 "01:30"，不能四舍五入成 "2:00"。
+        const capHint = has
+            ? (unit === 'mm:ss'
+                ? (function () {
+                    const m = Math.floor(dur / 60), s = Math.round(dur % 60);
+                    return String(m).padStart(2, '0') + ':' +
+                        String(s).padStart(2, '0');
+                })()
+                : fmtTime(dur))
+            : null;
+        return { unit: unit, capHint: capHint };
     }
 
     // 把用户输入规范化成「上限形态」的文本：补零到两位、去掉多余的冒号层数。
@@ -1346,17 +1359,32 @@
            非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转。
            颜色与 3s 慢速取自参考站 web-motion-showcase 的 Border Beam：
            conic 渐变 transparent→蓝→#38bdf8→#ec4899，3s linear infinite。 */
-        #dlr-ring{position:fixed;pointer-events:none;z-index:1000000;overflow:visible;
+        /* 下载光环：面板最外层一圈流动的渐变光带。
+           关键设计（v3.0.5 重写）：**光环不再是独立 fixed 层，而是 .body 的兄弟节点，
+           尺寸完全由 CSS 决定**——绝对定位 + inset:0 + width/height:100%，浏览器自己
+           把它撑到与面板同大同小。之前那套「JS 读 getBoundingClientRect 再回写 width/
+           height/left/top」在原理上就一定会漏：面板尺寸变化的**原因**有十几次（transition、
+           子元素展开、内容换行、窗口缩放、字体加载），JS 只能靠事件去追，追漏一次就永久
+           错位（实测 20~187px）。改成 CSS 约束后不存在「追不上」这件事。
+           SVG 用 pathLength=100 归一化周长，于是 dasharray 是纯比例（28 72），
+           面板怎么变宽变窄，光带长度都占 28%，不需要按真实周长重算。
+           rx 用百分比：描边落在面板圆角之外 1.5px 处，圆角随尺寸自适应。 */
+        #dlr-ring{position:absolute;left:0;top:0;width:100%;height:100%;
+            pointer-events:none;z-index:2;overflow:visible;
             opacity:0;transition:opacity 400ms ease-out}
         #dlr-ring.on{opacity:1}
-        #dlr-ring .ring-track{fill:none;stroke:rgba(61,110,255,.28);stroke-width:3}
+        #dlr-ring .ring-track{fill:none;stroke:rgba(61,110,255,.28);stroke-width:3;
+            vector-effect:non-scaling-stroke}
         #dlr-ring .ring-beam{fill:none;stroke-width:3.5;stroke-linecap:round;
             filter:drop-shadow(0 0 5px rgba(61,110,255,.85));
             animation:dlrRingDash 3s linear infinite}
-        /* 偏移量用 CSS 变量：JS 按真实周长写入 --ring-perim，
-           动画整周期正好走完一圈，不会像写死 -400 那样在高周长面板上
-           看起来「走得很快」或「几乎不动」。 */
-        @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:calc(-1 * var(--ring-perim, 900px))}}
+        /* pathLength=100 把真实周长（几百~几千 px）归一化成 100，
+           所以 dasharray 与 dashoffset 都可以写成固定的「比例」值。
+           动画一整周期正好走完归一化后的一圈，与面板实际大小无关。 */
+        @keyframes dlrRingDash{
+            from{stroke-dashoffset:0}
+            to{stroke-dashoffset:-100}
+        }
         #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
@@ -2812,11 +2840,16 @@
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
         document.body.appendChild(panel);
-        // 下载光环是独立 SVG 层，挂在 body 下而非面板内部，
-        // 避免面板的堆叠上下文/半透明背景影响光环渲染
+        // 下载光环：挂在面板内、.body 的**兄弟位置**，尺寸交给 CSS（见 CSS 注释）。
+        // 放在 .body 外面而不是里面：.body 有 background + overflow + 圆角，
+        // 塞进去会被裁切或被半透明背景污染。
         const NS = 'http://www.w3.org/2000/svg';
         const ring = document.createElementNS(NS, 'svg');
         ring.id = 'dlr-ring';
+        // pathLength 归一化：让 dasharray / dashoffset 成为与尺寸无关的比例值。
+        // 实测 Chromium 的 <rect> 支持此属性，改变 width/height 后
+        // getComputedStyle 的 stroke-dasharray 保持不变。
+        ring.setAttribute('pathLength', '100');
         const ringGrad = document.createElementNS(NS, 'linearGradient');
         ringGrad.setAttribute('id', 'dlrBeamGrad');
         ringGrad.setAttribute('x1', '0'); ringGrad.setAttribute('y1', '0');
@@ -2831,103 +2864,30 @@
         const ringBeam = document.createElementNS(NS, 'rect');
         ringBeam.setAttribute('class', 'ring-beam');
         ringBeam.setAttribute('stroke', 'url(#dlrBeamGrad)');
-
+        // 百分比几何：SVG 视口即面板盒子，rect 用百分比铺满。
+        // 描边在 inset 之外半个线宽，与面板圆角自然贴合。
+        [ringTrack, ringBeam].forEach(el => {
+            el.setAttribute('x', '0'); el.setAttribute('y', '0');
+            el.setAttribute('width', '100%'); el.setAttribute('height', '100%');
+            el.setAttribute('rx', '3%'); el.setAttribute('ry', '3%');
+            el.setAttribute('pathLength', '100');
+        });
+        // 光带占归一化周长的 28%，其余为透明缺口。数字固定，与面板尺寸无关。
+        ringBeam.setAttribute('stroke-dasharray', '28 72');
         ring.appendChild(ringGrad);
         ring.appendChild(ringTrack);
         ring.appendChild(ringBeam);
-        document.body.appendChild(ring);
-        // 光环跟随面板的位置和尺寸（含圆角）——SVG rect 几何
-        const syncRing = () => {
-            const r = panel.getBoundingClientRect();
-            const W = r.width + 6, H = r.height + 6;
-            ring.style.left = (r.left - 3) + 'px';
-            ring.style.top = (r.top - 3) + 'px';
-            ring.setAttribute('width', W);
-            ring.setAttribute('height', H);
-            const rx = Math.min(15, W / 2, H / 2);
-            [ringTrack, ringBeam].forEach(el => {
-                el.setAttribute('x', 2); el.setAttribute('y', 2);
-                el.setAttribute('width', Math.max(0, W - 4));
-                el.setAttribute('height', Math.max(0, H - 4));
-                el.setAttribute('rx', rx);
-            });
-            // dasharray 必须按**真实周长**设置。
-            // 原来写死 pathLength=400 + dasharray 110 290：pathLength 会把实际周长
-            // （几百 px）强行归一化成 400，dasharray 的比例随之失真，光带缩成一小段
-            // 而不是沿整圈流动——这正是「光环看不见 / 只有一小截」的根因。
-            const cw = Math.max(0, W - 4), ch = Math.max(0, H - 4);
-            const perim = 2 * (cw + ch) - 8 * rx + 2 * Math.PI * rx;   // 圆角矩形周长
-            if (perim > 0) {
-                const seg = Math.max(24, perim * 0.28);   //亮段约占周长 28%
-                // dasharray 必须用**逗号**分隔两个数。原来写成 seg + '' + (perim - seg)
-                // 是字符串拼接：'533.1' + '1370.8' → '533.11370.8'，浏览器只解析出
-                // 单个数 533.113（第二个小数点处截断），于是实际是「533px 实线 + 0.8px 缝」，
-                // 绕一圈几乎全亮、根本看不出光带在流动。
-                ringBeam.setAttribute('stroke-dasharray', seg + ',' + (perim - seg));
-                ringBeam.style.strokeDashoffset = '0';
-                ringBeam.style.setProperty('--ring-perim', perim + 'px');
-            }
-        };
-        syncRing();
-        // 光环显隐：用 .on 类切换（SVG 无 border，改由 CSS opacity 控制）
-        // 显隐用内联 opacity，不用 class。实测本页面上 `.on{opacity:1}`
-        // 虽已匹配却仍算出 0（与 .more-body 同一个坑），class 规则不可靠；
-        // 内联优先级最高，不依赖任何样式表计算。
+        // 插到 .body 之前：同为面板的直接子元素，absolute 相对 #dlr-panel 定位。
+        const bodyEl = panel.querySelector('.body');
+        panel.insertBefore(ring, bodyEl);
+        // 显隐：内联 opacity 优先级最高，不依赖样式表计算
+        // （class 规则在本页面上曾出现「已匹配却算出 0」的坑）。
         const ringHide = () => { ring.classList.remove('on'); ring.style.opacity = '0'; };
-        const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; syncRing(); };
+        const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; };
         ringHide();
-        // 面板几何变化时自动跟随光环。
-        //
-        // 原来靠 transitionstart/transitionend 启动/停止一个 rAF 逐帧循环，有三个致命缺陷：
-        //  1) transitionstart 在**子元素**上也会冒泡到面板，收起面板时子元素先结束过渡
-        //     （如 .collapse 的 opacity 150ms，比面板 280ms 短），ringAnimStop 立刻停掉循环，
-        //     面板自己的高度/宽度过渡还在跑 —— 光环从此停在旧尺寸上不动了。
-        //     表现就是「光环在外面框出一大块地方」/「展开后光环不跟着变大」。
-        //  2) 面板尺寸变化的**原因**不只有过渡：更多设置展开（子元素 height 过渡）、
-        //     预览区、状态栏换行、窗口缩放、字体加载，都不一定在面板上触发 transition，
-        //     光环就完全失联。
-        //  3) 只靠事件时机补一次 syncRing，补在动画中段（错位 20~187px）。
-        //
-        // 改为 ResizeObserver：面板盒子一变就同步，与「为什么变」无关，
-        // 收起/展开/更多设置/窗口缩放全部覆盖。ResizeObserver 不冒泡，
-        // 观察 #dlr-panel 自己即可拿到所有尺寸变化。
-        let ringRaf = 0;
-        const ringAnimLoop = () => {
-            syncRing();
-            ringRaf = requestAnimationFrame(ringAnimLoop);
-            };
-        // 过渡期间补 rAF，让 dasharray/圆角跟得上补间；非过渡期不常驻轮询。
-        // 起停仍看面板自身的过渡，但**忽略子元素冒泡来的事件**，
-        // 否则短过渡的子元素会提前把循环停掉（就是原来那个 bug）。
-        const panelIsTransitioning = (e) => (e.target === panel);
-        const ringAnimStart = (e) => {
-            if (!panelIsTransitioning(e)) return;
-            if (!ringRaf && ring.classList.contains('on')) ringAnimLoop();
-        };
-        const ringAnimStop = (e) => {
-            if (!panelIsTransitioning(e)) return;
-            if (ringRaf) { cancelAnimationFrame(ringRaf); ringRaf = 0; }
-            syncRing();   // 兜底：补上最后一帧，避免停在动画中段的尺寸上
-        };
-        panel.addEventListener('transitionstart', ringAnimStart);
-        panel.addEventListener('transitionend', ringAnimStop);
-        // 窗口缩放会改变面板的位置（fixed 定位跟着视口走），尺寸没变时
-        // ResizeObserver 不触发，同样要手动补一次。
-        window.addEventListener('resize', () => {
-            try { syncRing(); } catch (e) { }
-        });
-        // ResizeObserver 兜住所有「不触发面板自身 transition」的尺寸变化。
-        // 它在过渡进行中也会连续触发，与 rAF 循环互补；两者同时存在也无害
-        // （syncRing 幂等，只是重复写同样的一组属性）。
-        if (typeof ResizeObserver === 'function') {
-            try {
-                const ro = new ResizeObserver(() => {
-                    if (ring.classList.contains('on')) syncRing();
-                });
-                ro.observe(panel);
-                window.__ringRO = ro;
-            } catch (e) { /* 老浏览器无 ResizeObserver，靠事件路径也能工作 */ }
-        }
+        // 不再有任何同步逻辑：尺寸/位置/圆角全部由 CSS 约束自动跟随。
+        // __ringSync 保留为空实现，防止旧调用点抛错。
+        const syncRing = () => {};
         window.__ringShow = ringShow;
         window.__ringHide = ringHide;
         window.__ringSync = syncRing;
@@ -3071,9 +3031,15 @@
 
         // 分辨率：默认自动（原始=最高带宽）；预取后回填各档位，切换即重新预取
         const resSel = $('dlr-res');
+        // 待恢复的分辨率。**不能**在此处直接 resSel.value = GM 值：
+        // 面板模板里 <select id="dlr-res"> 只有一个 value="" 的选项，
+        // 赋一个不存在的值会被浏览器静默置空，随后 fillResOptions 读到的
+        // 已经是空值 —— 保存的分辨率就这样每次刷新都丢掉（用户设 720p、
+        // 实际下 1080p，且毫无提示）。改为先记下，等选项建好后再套用。
+        let pendingRes = '';
+        try { pendingRes = GM_getValue('dlr_res') || ''; } catch (e) { }
         // 上一次的有效选择：用户点「自定义…」后取消/输错时要回到这里，而不是留下哨兵值
         let lastValidRes = '';
-        try { const rv = GM_getValue('dlr_res'); if (rv) resSel.value = rv; } catch (e) { }
         // 常用档位：按宽度降序，实际只显示「不超过原始分辨率」的那些。
         // 播放列表里常常没有对应档位，所以这里只是快捷入口——最终仍由
         // pickResVariant 挑最接近的真实档位。
@@ -3112,7 +3078,13 @@
             });
             // 自定义入口永远在最后
             addOpt(CUSTOM_RES, '自定义... (手动输入宽×高)');
-            resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
+            // 恢复优先级：本次刷新前保存的值 > 本次填充前的当前值。
+            // pendingRes 在初始化时存的是 GM 值；fillResOptions 也可能在
+            // 用户已手动选过档位之后被再次调用（预取完成后回填），那时
+            // cur 才是应该保留的当次选择。
+            const want = pendingRes || cur;
+            resSel.value = want;   // 不存在则浏览器回落"自动"
+            if (resSel.value !== want) pendingRes = '';   // 该档位在本片里不存在
         };
         resSel.addEventListener('change', () => {
             // 「自定义…」不直接用：弹输入框，校验后换成真实档位值存回去。
@@ -3161,6 +3133,7 @@
                 }
             }
             lastValidRes = resSel.value;
+            pendingRes = resSel.value;   // 用户手动改过，后续回填以它为准
             try { GM_setValue('dlr_res', resSel.value); } catch (e) { }
             // 切换分辨率 → 缓存键不同，直接重新预取，下载时秒用
             let p = null;
@@ -3582,10 +3555,6 @@
             panel.style.bottom = p.bottom;
             // 记下**钳制后**的坐标：下一轮 resize 要以它为基准，否则误差会逐次累积
             lastPos = { x: parseFloat(p.left) || 0, y: parseFloat(p.top) || 0 };
-            // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上。
-            // 漏掉这一步的表现：拖动面板时光环停在原地不动，面板滑走了，
-            // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）。
-            try { syncRing(); } catch (e) { }
         };
         // 窗口缩放后重新钳制面板位置。
         // 缺陷表现：把面板拖到最右再缩小窗口，面板会有一大半跑到屏幕外

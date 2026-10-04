@@ -192,6 +192,18 @@ section('clipTimeHint / normalizeClipText（截取时间单位自动识别 v2.3.
     eq(clipTimeHint(undefined).capHint, null, 'undefined → capHint 为 null');
     eq(clipTimeHint(-5).capHint, null, '负数 → capHint 为 null');
     eq(clipTimeHint(90).capHint, '01:30', 'capHint 用 fmtTime 形态');
+    // v3.0.4: capHint 必须按**用户要填的同一个 unit** 渲染，否则照抄提示会得到别的时刻。
+        // 实际契约（先看 clipTimeHint 的阈值再写断言，别臆想）：
+        //   >= 3600s → hh:mm:ss，小时位不补零（fmtTime 的行为，1 小时就是 "1:00:00"）
+        //   <  3600s → mm:ss，保留秒、分钟位补零（90 秒 = "01:30"，不是 "2:00"）
+        // 关键回归点是 mm:ss 分支必须保留秒 —— 曾一度写成 Math.round(dur/60)+':00'，
+        // 90 秒会变成 "2:00"，用户照抄就只剩 2 分钟。
+        eq(clipTimeHint(5400).capHint, '1:30:00', '5400s 已达 1 小时 → 走 hh:mm:ss，小时位不补零');
+        eq(clipTimeHint(59).capHint, '00:59', 'mm:ss 形态下不足 1 分钟保留秒');
+        eq(clipTimeHint(90).capHint, '01:30', 'mm:ss 形态下 90 秒写成 01:30 而不是 2:00');
+        eq(clipTimeHint(3599).capHint, '59:59', 'mm:ss 的上边界（差 1 秒切形态）');
+        eq(clipTimeHint(3600).capHint, '1:00:00', '整点切到 hh:mm:ss，提示同步切成三段形态');
+        eq(clipTimeHint(3661).capHint, '1:01:01', 'hh:mm:ss 形态保留秒');
 
     // mm:ss 形态下的规范化
     eq(normalizeClipText('1:2', 'mm:ss'), '1:02', 'mm:ss 秒位补零');
