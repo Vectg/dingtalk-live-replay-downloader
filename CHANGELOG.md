@@ -7,7 +7,24 @@
 
 ### 计划
 - **内嵌播放器** / **推送到下载器**(aria2)/ **视口自适应深度优化**: 均顺延到 3.0.0 之后.
+## [2.7.0] - 2026-10-04
+
+### 新增
+- **解析阶段后台预下载**: 打开回放页后, `prep()` 解析出切片列表即在后台静默下载,
+  弱并发 2 以免抢用户带宽. 点「下载」时只需合并保存, 等待时间被前置到浏览页面的
+  那段时间里. 更多设置新增「解析后后台预下载」开关(默认开).
+- 预下载进度写入日志(两行: 开始 / 完成), 不弹提示、不改进度条——后台行为不打扰用户.
+- 「中断」与「删除已下载」会一并停掉/清空预下载缓存.
+### 技术细节
+- **预下载只存内存, 不写 IndexedDB**. 两个原因: ① `partial` 的 key 含截取区间
+  (`roomId|liveUuid|res|from-to`), 而预下载发生在用户还没设截取时, 两者 key 必然不同,
+  复用等于永远命不中; ② IndexedDB 只有单槽, 预下载去写会与用户正式下载的断点缓存
+  抢槽, 用户点「删除已下载」时就得连带清理. 只放内存则语义清晰, 刷新即丢弃.
+- **带截取区间时不复用预下载**: 预下载下的是完整回放的切片, 按区间裁剪后切片下标
+  对不上, 强行复用会拿到错位的片段. 只在 `!clip.range` 时整段命中.
+- 正式下载一开始就把 `pre.stop` 置 true, 避免两边同时拉同一片.
 ## [2.6.3] - 2026-10-04
+
 
 ### 变更
 - **面板文案统一为英文标点**(用户要求): 全角 `：，。（）；、` 全部换成
@@ -351,7 +368,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0.HEAD
+[2.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.v2.7.0
 [2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.v2.6.3
 [2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.v2.6.2
 [2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.v2.6.1

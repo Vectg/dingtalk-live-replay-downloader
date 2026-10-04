@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.6.3-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-2.7.0-informational)](CHANGELOG.md)
 
 A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
@@ -12,7 +12,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v2.6.3）
+## 功能（v2.7.0）
 
 **核心**
 
@@ -27,6 +27,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **完整性校验（v1.9.7）**：全部切片下载后逐片校验——数量齐全、非空、TS 同步字节 188 周期对齐（在首 188 字节内找对齐点，兼容带 ID3/填充前缀的合法切片；HTML 错误页与截断数据会被识破）。通过则日志 `✅ 完整性校验通过：60/60 片 · 341.2 MB`；发现异常则**只把问题片置空、好片保留为断点缓存**，报出具体片号，点下载只补异常片，不用重下整个回放。
 - **帧级精确截取（v2.5.0 优化入口，实验性，默认关）**：更多设置里开启。切片对齐只能精确到切片长度（通常 30 秒），开启后会在切片对齐的基础上再做一次精修：逐帧解析视频流找出全部关键帧，把起止点对齐到离目标最近的 IDR。**因为帧级精修需要完整切片集才能建立时间轴基准，启用时会先下载完整回放再裁剪**（多花一点流量和时间，但换来的精度是切片对齐做不到的）。中途切出的流会重新封装 SPS/PPS 并插入输出开头，否则播放器找不到解码参数、开头若干帧会解码失败。fMP4 回放不支持（没有 TS 包结构）；解析不到足够关键帧时自动退回切片对齐结果，绝不会因为「想更精确」而让用户拿不到文件。**v2.5.0 起在截取区加了醒目指引**：不知道这个功能的人直接点提示行里的蓝色「点这里打开『帧级精确截取』」，会自动展开「更多设置」并让那个开关闪两下，不必自己去找。开关标题写明「默认关」及开启代价。
 - **智能调度（v2.1.0）**：更多设置里开启（默认开）。两件事一起做——**贪心取片顺序**：抽样探测头尾各若干片的真实体积（1 字节 Range，不下载整片），体积大的先下，让最长的那根线尽早启动，压缩整体完成时间；**并发自适应**：从你设定的线程数起步，连续成功就逐级加到 16，一旦有切片失败立刻降并发退避，恢复后再爬回去。切片体积探不到（探测失败或 BYTERANGE 分片）时自动退回原序下载，不影响功能。日志会报告抽样情况与最终并发。关掉后并发固定为设定值，行为与 1.9.x 一致。
+- **解析后后台预下载（v2.7.0）**：打开回放页后，解析出切片列表的那一刻就在后台静默下载切片（弱并发 2，不抢带宽），日志提示 `✓ 后台预下载完成 12 片 · 441 KB，现在点下载只需合并保存`。等你想好要下的时候，点下载几乎瞬间完成。更多设置里可关（默认开），关掉后行为与 2.6.x 完全一致。**预下载只存内存不落盘**——刷新页面即丢弃，不会产生「删不掉」的幽灵缓存。点「中断」或「删除已下载」会一并清掉。
 - **下载队列（v2.0.0）**：链接输入框下方可填多行队列（每行一个回放），点「▶ 开始队列」按顺序依次下载完。行格式宽松——整段链接、裸查询串、`roomId liveUuid`、`roomId=liveUuid liveUuid=…`（从聊天记录复制时最常见的形式）都能识别；空行与 `#` 开头的注释行忽略，无法识别的行会单独报出并指出是第几行。**单个回放失败不会中断整队**——排了 5 个、第 3 个签名过期，4 和 5 照常跑完，最后汇总「成功 N · 失败 M」。刻意做成顺序执行而非并发：并发多个回放只会让它们互相抢带宽、一起变慢，用户要的是「一次挂几个」而不是「一起抢」。
 - **导出 m3u8 播放列表（v1.9.12）**：面板底部「📄 导出 m3u8」把当前选中分辨率的切片列表存成标准播放列表，便于用 VLC / ffmpeg / 其他下载器重新拉取或存档。严格按 HLS 规范输出——`TARGETDURATION` 向上取整到最长片、`EXTINF` 与切片 URL 严格交替、`EXT-X-MAP` 在首个 `EXTINF` 之前、`BYTERANGE` 在其切片 URL 之前、AES-128 时带 `KEY` 声明（含 IV）、结尾 `EXT-X-ENDLIST`。刻意不加 BOM：部分解析器会把带 BOM 的首行当成标签名。已用 ffmpeg 实测可正常识别（时长与切片数完全吻合）。
 - **一键导出诊断日志（v1.9.11）**：面板底部「📋 导出诊断日志」生成 `.txt`，包含脚本版本、浏览器 UA、硬件并发与自动识别的线程数、解析结果（切片数/时长/加密/fMP4/多码率档位）、缓存与待重试片号、各项设置、每次下载的成败结论，以及**页面未捕获的异常与 Promise 拒绝**。播放地址里的签名（`auth_key`/`token`/`sign`/`signature`，含大小写变体）会被自动抹除——诊断文本常被直接贴到公开 issue 里，不抹除等于泄露一次性凭证。

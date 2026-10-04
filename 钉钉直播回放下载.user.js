@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.6.3
+// @version      2.7.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -168,6 +168,11 @@
         L.push('【缓存与设置】');
         const cached = partial && partial.datas ? partial.datas.filter(Boolean).length : 0;
         push('  内存缓存', partial ? (cached + ' 片 ' + (partial.key ? '' : ' (key 不匹配)')) : '无');
+        push('  后台预下载', pre.datas
+            ? (pre.want + '/' + pre.total + ' 片 · ' + fmtBytes(pre.bytes) +
+               (pre.running ? ' (进行中)' : (pre.stop ? ' (已中断)' : '')) +
+               ' · ' + (preEnabled() ? '开' : '关'))
+            : (preEnabled() ? '开 (尚未解析)' : '关'));
         const failed = lastFailed ? lastFailed.length : 0;
         push('  待重试', failed ? (failed + ' 片: #' + lastFailed.slice(0, 20).join(' #')) : '无');
         const readChk = (id, key, def) => {
@@ -1697,6 +1702,8 @@
                     <label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label>
                     <label class="chk" title="拖动面板时自动收起 更多设置 与输出区. 默认开启.">
                         <input type="checkbox" id="dlr-drag-collapse">拖动时自动收起设置</label>
+                    <label class="chk" title="打开页面后, 解析出切片列表时就在后台静默下载切片, 点下载时只需合并保存. 仅存内存, 刷新即丢弃.">
+                        <input type="checkbox" id="dlr-predownload">解析后后台预下载</label>
                     <label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
                     <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
                 </div>
@@ -1793,6 +1800,46 @@
     // 与「换更低并发重试」建议——好片永远留在 datas 里，不会被重复下载。
     const DL = { pause: false, cancel: false, running: false, purge: false };
     let partial = null;   // {key, datas} —— 中断时保留，purge 时清空
+
+    // ---------- 解析阶段后台预下载（v2.7.0） ----------
+    // 打开页面 → prefetch 解析出切片列表时就开始静默拉片，用户点「下载」时
+    // 只需合并保存，把「等切片」这一段等待前置到浏览页面的时间里。
+    //
+    // 为什么单独存一份而不复用 partial：
+    //   partial 的 key 含截取区间(roomId|liveUuid|res|from-to)，而预下载发生在
+    //   用户还没设截取时，两者 key 必然不同，复用等于永远命不中。而且 IndexedDB
+    //   只有单槽，若预下载去写它，会和用户正式下载的断点缓存抢槽——用户中途
+    //   「删除已下载」时就得连带清掉预下载。所以预下载只放内存、不落盘：
+    //   刷新页面即丢弃，语义清晰，也不会产生「删不掉」的幽灵缓存。
+    const pre = {
+        key: null,        // roomId|liveUuid|res
+        datas: null,      // 与 parsed.segments 一一对应，未完成处为 null
+        want: 0,          // 已完成片数
+        bytes: 0,         // 已缓存字节
+        total: 0,         // 总片数
+        stop: false,      // 用户点中断 / 开始正式下载时置 true
+        running: false,
+    };
+    const preEnabled = () => {
+        try {
+            const v = GM_getValue('dlr_predownload');
+            return v === undefined || v === null ? true : !!v;   // 默认开
+        } catch (e) { return true; }
+    };
+    const preReset = (key, n) => {
+        pre.key = key; pre.datas = new Array(n).fill(null);
+        pre.want = 0; pre.bytes = 0; pre.total = n; pre.stop = false; pre.running = false;
+    };
+    // 取用：命中同一 key 才复用；正式下载开始后停掉预下载，避免两边同时拉同一片
+    const preTake = (key) => {
+        if (!pre.datas || pre.key !== key) return null;
+        let n = 0, bytes = 0;
+        const out = new Array(pre.total);
+        for (let i = 0; i < pre.total; i++) {
+            if (pre.datas[i]) { out[i] = pre.datas[i]; n++; bytes += pre.datas[i].length; }
+        }
+        return { datas: out, count: n, bytes };
+    };
     // 上次失败的片号（1-based）。为 null 表示没有待重试的失败片，按钮隐藏。
     // 成功/换 key/删除缓存时清空——避免拿上一轮的数字误导用户。
     let lastFailed = null;
@@ -2145,7 +2192,58 @@
             } catch (e) { appendLog('   ⚠ 分辨率探测失败:' + e.message); }
         }
         prepCache = { key, at: Date.now(), token, model, parsed, resInfo };
+        // 解析完成即后台预下载切片（v2.7.0）。不 await：解析阶段就该返回，
+        // 预下载在后台自己跑，用户什么时候点下载都不影响。
+        startPreDownload(roomId, liveUuid, wantRes, parsed);
         return prepCache;
+    }
+
+    // ---------- 解析阶段后台预下载（v2.7.0） ----------
+    // 逐片静默拉取，弱并发（2）以免和用户正在做的事抢带宽；进度写到日志一行，
+    // 不弹提示、不改进度条——它是后台行为，不该打扰用户。
+    async function startPreDownload(roomId, liveUuid, wantRes, parsed) {
+        if (!preEnabled() || !parsed || !parsed.segments || !parsed.segments.length) return;
+        // fMP4 的 init 段与分片要按序取，弱并发下按顺序取即可，无需贪心调度
+        const key = roomId + '|' + liveUuid + '|' + (wantRes || '');
+        if (pre.key === key && pre.running) return;          // 已在跑
+        if (pre.key === key && pre.want >= pre.total) return; // 已下完
+        preReset(key, parsed.segments.length);
+        pre.running = true;
+        const segs = parsed.segments;
+        const keyCache = {};
+        let prevEnd = null;
+        appendLog('   ⏬ 开始后台预下载 ' + segs.length + ' 个切片（可随时中断, 不影响稍后正式下载）');
+        let next = 0, failed = 0;
+        const worker = async () => {
+            for (;;) {
+                if (pre.stop) return;
+                const i = next++;
+                if (i >= segs.length) return;
+                try {
+                    const r = await downloadSegment(segs[i], keyCache, prevEnd);
+                    prevEnd = r.end;
+                    if (!pre.datas || pre.stop) return;
+                    pre.datas[i] = r.bytes;
+                    pre.want++; pre.bytes += r.bytes.length;
+                } catch (e) {
+                    // 单片失败不终止预下载：正式下载时它会被正常重试
+                    failed++;
+                }
+            }
+        };
+        try { await Promise.all([worker(), worker()]); } catch (e) { }
+        pre.running = false;
+        if (pre.stop) {
+            appendLog('   ⏹ 后台预下载已中断（已完成 ' + pre.want + '/' + pre.total + ' 片）');
+            return;
+        }
+        if (pre.want >= pre.total) {
+            appendLog('   ✓ 后台预下载完成 ' + pre.want + ' 片 · ' + fmtBytes(pre.bytes) +
+                '，现在点下载只需合并保存');
+        } else {
+            appendLog('   ⏬ 后台预下载完成 ' + pre.want + '/' + pre.total + ' 片 · ' +
+                fmtBytes(pre.bytes) + (failed ? '（' + failed + ' 片失败, 正式下载时会重试）' : ''));
+        }
     }
 
     // ---------- 智能调度：贪心优先级 + 自适应并发 ----------
@@ -2365,6 +2463,23 @@
             const dlKey = roomId + '|' + liveUuid + '|' + (opts.res || '') +
                 '|' + (clip.range ? clip.range.from + '-' + clip.range.to : 'full');
             let resumed = 0, resumedBytes = 0;
+            // 先吃后台预下载：正式下载一开始就让预下载停下，避免两边同时拉同一片
+            pre.stop = true;
+            const preKey = roomId + '|' + liveUuid + '|' + (opts.res || '');
+            // 只有「未设截取」时才整段命中——预下载下的是完整回放的片子，
+            // 带区间裁剪时切片下标对不上，不能直接复用。
+            if (!clip.range) {
+                const hit = preTake(preKey);
+                if (hit && hit.count) {
+                    for (let i = 0; i < Math.min(hit.datas.length, segs.length); i++) {
+                        if (hit.datas[i]) { datas[i] = hit.datas[i]; resumed++; resumedBytes += datas[i].length; }
+                    }
+                    if (resumed) {
+                        appendLog('   ⏬ 命中后台预下载，已就绪 ' + resumed + '/' + segs.length +
+                            ' 个切片 · ' + fmtBytes(resumedBytes) + '，无需重新下载');
+                    }
+                }
+            }
             if (partial && partial.key === dlKey &&
                 partial.datas && partial.datas.length === segs.length) {
                 for (let i = 0; i < segs.length; i++) {
@@ -2857,6 +2972,9 @@
         bindChk('dlr-frameclip', 'dlr_frameclip', false);
         // 拖动时自动收起「更多设置」/输出区（默认开）。拖拽逻辑读同一个键。
         bindChk('dlr-drag-collapse', 'dlr_drag_collapse', true);
+        // 解析阶段后台预下载（v2.7.0）：默认开。开启后打开页面即在后台拉切片，
+        // 用户点「下载」时几乎瞬间完成。关掉则行为与 2.6.x 完全一致。
+        bindChk('dlr-predownload', 'dlr_predownload', true);
 
         // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下。
         // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。
@@ -3266,7 +3384,11 @@
         });
         const cancelBtn = $('dlr-cancel');
         cancelBtn && cancelBtn.addEventListener('click', () => {
-            if (!DL.running) return;
+            pre.stop = true;                 // 正式下载中断时，后台预下载也一并停掉
+            if (!DL.running) {
+                appendLog('⏹ 已中断后台预下载');
+                return;
+            }
             DL.cancel = true;
             setStatus('⏹ 正在停止... (已下载切片会保留, 可断点续传)');
         });
@@ -3278,6 +3400,7 @@
                 setStatus('🗑 正在清空全部已下载切片...');
             } else {
                 partial = null;
+                preReset(null, 0);            // 「删除已下载」同时清掉预下载缓存
                 lastFailed = null;
                 renderRetryRow();
                 idbClearPartial().catch(() => {});   // 非 async 回调，fire-and-forget
