@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.5.0-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-2.6.0-informational)](CHANGELOG.md)
 
 A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
@@ -12,7 +12,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v2.5.0）
+## 功能（v2.6.0）
 
 **核心**
 
@@ -58,8 +58,10 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 **面板外观**
 
 - **毛玻璃**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
-- **面板可拖拽（v2.4.0）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**横向**会被夹在可视区内，面板不会拖丢；**纵向**可以拖出视口——面板展开后往往比窗口还高（600px+），若强行夹住就永远贴死在顶部、看着像「拖不动」，页面本身能滚，让它跟着滚更自然。
+- **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起。**在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起。
+- **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）。拖动面板时自动折叠「更多设置」与输出预览区，拖完自动恢复原状态——折叠区在拖动过程中只会碍事。不想这个行为可以在更多设置里关掉。
+- **更多设置更紧凑（v2.6.0）**：数字输入框与下拉框两两并排一行，八个开关排成两列网格，整体高度比之前矮一半，不用再滚动半天找选项。
 - **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**。前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留；手动收起/展开会同步「面板状态」。**面板状态读取做了归一化**：历史版本存过的布尔、数字、字符串杂散值（`true`/`1`/`'true'`）都能正确识别，首启自动统一成规范格式，下拉框始终与面板实际状态一致（v1.9.3 修复「实际收缩却显示默认展开」的错位）。展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡。
 - **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化。进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度。收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms `cubic-bezier(0.16,1,0.3,1)` 弹簧曲线，宽高透明度完全同步），并尊重系统「减少动态效果」设置。
 - **下载光环**：下载进行时，面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动）。用 SVG 圆角矩形 + `stroke-dash` 实现，3s 慢速、不翻转；中间完全不涂色，**不会透进面板内部糊成色块**。收缩成横条时光环同样包住。

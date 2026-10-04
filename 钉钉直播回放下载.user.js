@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.5.0
+// @version      2.6.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -175,7 +175,7 @@
             catch (e) { return def; }
         };
         push('  并发线程', String(readChk('dlr-thread', 'dlr_thread', '默认')));
-        push('  重试次数', String(readChk('dlr-retry', 'dlr_retry', '默认')));
+        push('  重试次数', String(readChk('dlr-retry-num', 'dlr_retry', '默认')));
         push('  预取', readChk(null, 'dlr_prefetch', true) ? '开' : '关');
         push('  通知', (readChk(null, 'dlr_notify_desktop', true) ? '开' : '关') + ' / 声音' +
             (readChk(null, 'dlr_notify_sound', false) ? '开' : '关'));
@@ -1352,11 +1352,13 @@
         /* 拖动中：禁掉过渡，否则 width/left 一起动画会粘滞 lagging 手感 */
         #dlr-panel.dragging{transition:none!important}
         #dlr-panel.dragging .drag{cursor:grabbing}
-        /* 「点这里打开帧级截取」的跳转高亮：只在用户点过来时闪一下 */
+        /* 「点这里打开帧级截取」的跳转高亮：只在用户点过来时闪一下，
+           不用持续动画——面板常驻视线内，闪一下足够指路，不必一直晃。 */
         #dlr-panel .chk.flash{animation:dlrFlash 1.1s ease-out 2}
         @keyframes dlrFlash{0%,100%{background:transparent}
             40%{background:rgba(61,110,255,.32);border-radius:5px}}
         #dlr-panel.frost .body{backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
+        #dlr-panel .drag{padding-right:48px}   /* 让开右上角「收起」按钮 */
         #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px;
             /* 右侧让开绝对定位的「收起」按钮（约 42px 宽 + 8px 边距），避免标题被盖住 */
             padding-right:58px}
@@ -1400,7 +1402,19 @@
             color:#5a5f6b;font-size:10px;margin-top:4px}
         #dlr-status:not(.hist)::before{content:'🕘 ';opacity:.55}
         #dlr-panel .err{color:#ff7a7a}
-        #dlr-preview{display:none;margin-top:10px;border-top:1px solid #23262e;padding-top:10px}
+        /* 输出框（预览播放器）的展开/收起动画（v2.6.0）。
+           display:none ↔ block 是瞬间切换、无法过渡，所以改用
+           grid-template-rows:0fr→1fr + opacity，与面板其他折叠区同一条曲线，
+           内容与外壳同步收放，不会出现「外壳缩完了内容还在」���错位。 */
+        #dlr-preview{height:0;overflow:hidden;opacity:0;
+            margin-top:0;border-top:1px solid transparent;padding-top:0;
+            transition:height 280ms cubic-bezier(0.16,1,0.3,1),
+                opacity 200ms ease-out,margin-top 280ms cubic-bezier(0.16,1,0.3,1),
+                padding-top 280ms cubic-bezier(0.16,1,0.3,1),
+                border-color 280ms ease-out}
+        #dlr-preview.show{opacity:1;margin-top:10px;border-top-color:#23262e;padding-top:10px}
+        /* 展开高度由 JS 按内容实测写内联 height（见 showPreview）。
+           不靠 CSS 的 max-height：钉钉页面样式表顺序会让展开值被收起值压住。 */
         #dlr-preview .ph{position:relative;background:#000;border-radius:8px;overflow:hidden}
         #dlr-preview video{display:block;width:100%;max-height:230px;background:#000}
         #dlr-preview .px{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:0;
@@ -1418,12 +1432,24 @@
             transform:rotate(-45deg);
             transition:transform 260ms cubic-bezier(0.16,1,0.3,1),border-color 150ms ease}
         #dlr-panel .more-toggle[aria-expanded="true"] .mt-ic{transform:rotate(45deg);border-color:#3d6eff}
-        #dlr-panel .more-body{display:grid;grid-template-rows:0fr;
-            transition:grid-template-rows 260ms cubic-bezier(0.16,1,0.3,1),
-                opacity 200ms cubic-bezier(0.4,0,0.2,1);opacity:0}
-        #dlr-panel .more-body>div{overflow:hidden;min-height:0}
-        #dlr-panel .more-body.open{grid-template-rows:1fr;opacity:1}
+        #dlr-panel .more-body{display:block;height:0;opacity:0;overflow:hidden;
+            transition:height 260ms cubic-bezier(0.16,1,0.3,1),
+                opacity 200ms cubic-bezier(0.4,0,0.2,1)}
+        #dlr-panel .more-body>div{min-height:0}
         #dlr-panel .more-body .row:first-child{margin-top:6px}
+        /* 紧凑排版（v2.6.0）：数字/下拉两两并排，开关类选项排成两列网格。
+           用户要求「两个选项放同一行的左右两边」——原来每项独占一行，
+           十来个开关要滚很久。 */
+        #dlr-panel .mrow{display:flex;gap:8px;margin-top:6px}
+        #dlr-panel .mrow>.row{flex:1;min-width:0;margin-top:0}
+        #dlr-panel .mrow>.row>label{flex:0 0 auto;white-space:nowrap}
+        #dlr-panel .mrow>.row>input[type=number]{flex:1;min-width:0;width:auto}
+        #dlr-panel .mrow>.row>select{flex:1;min-width:0;width:auto}
+        #dlr-panel .grid2{display:grid;grid-template-columns:1fr 1fr;
+            gap:2px 10px;margin-top:6px}
+        #dlr-panel .grid2>.chk{min-width:0;font-size:12px;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #dlr-panel .grid2>.chk>input{flex:0 0 auto}
         /* 收缩态：横向长条——上面是名字，下面是进度条（解析蓝 / 下载绿） */
         #dlr-panel.mini{width:230px;padding:0;border-radius:12px}
         #dlr-panel.mini .body{width:230px;border-radius:12px;
@@ -1434,10 +1460,16 @@
             backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel.mini .collapse{opacity:0}
         /* 展开态：默认隐藏收缩条 */
-        #dlr-panel .expand{display:none;flex-direction:column;gap:7px;cursor:pointer;
-            padding:9px 12px;color:#d7d9de;font-size:12px;user-select:none;
+        /* 收起横条。display:none ↔ flex 是瞬间切换、无法过渡，和 body 的
+           280ms 高度收缩不同步——收起时会看到横条「啪」地闪出来。
+           改成 grid-template-rows:0fr→1fr + opacity，与 body 用同一条曲线，
+           两边同时开始、同时结束（v2.6.0 修复收起动画错位）。 */
+        #dlr-panel .expand{height:0;overflow:hidden;opacity:0;
+            cursor:pointer;padding:0 12px;color:#d7d9de;font-size:12px;
             background:rgba(22,24,29,.92);border-radius:12px;
-            opacity:0;transition:opacity 200ms ease-out}
+            transition:height 280ms cubic-bezier(0.16,1,0.3,1),
+                opacity 200ms ease-out,padding 280ms cubic-bezier(0.16,1,0.3,1)}
+        #dlr-panel .expand .ex-inner{display:flex;flex-direction:column;gap:7px;padding:9px 12px}
         #dlr-panel .expand .ex-row{display:flex;align-items:center;gap:7px;min-width:0}
         #dlr-panel .expand .lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;
             text-overflow:ellipsis;font-weight:600;letter-spacing:.2px}
@@ -1457,7 +1489,7 @@
         #dlr-panel.mini.frost .expand{background:rgba(22,24,29,.55);
             -webkit-backdrop-filter:blur(14px) saturate(150%);backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel .expand:active{transform:scale(.995)}
-        #dlr-panel.mini .expand{display:flex;opacity:1}
+        #dlr-panel.mini .expand{opacity:1}   /* 高度由 applyMini 用内联写入 */
         #dlr-panel.mini .expand:hover .ic{transform:scale(1.12)}
         #dlr-panel.mini .expand .ic{transition:transform 220ms cubic-bezier(0.16,1,0.3,1)}
         /* 收缩态内容淡出 + 高度折叠（单一过渡曲线，宽高同步，避免内容硬塌） */
@@ -1514,15 +1546,19 @@
     // 注意：不要给 panel 设 position:relative 内联样式——会覆盖 CSS 的 position:fixed，
     // 导致面板掉进文档流（跑到页面左下角）。position:fixed 本身已足以作为收缩按钮的定位参照。
     panel.innerHTML = `
-        <div class="expand" id="dlr-exp" title="点击展开面板">
-            <div class="ex-row"><span class="ic">⬇</span><span class="lb" id="dlr-ex-title">钉钉直播回放下载</span></div>
-            <div class="ex-track"><div class="ex-bar" id="dlr-ex-bar"></div></div>
+        <div class="expand drag" id="dlr-exp" title="点击展开面板；按住拖动可移动">
+            <div class="ex-inner">
+                <div class="ex-row"><span class="ic">⬇</span><span class="lb" id="dlr-ex-title">钉钉直播回放下载</span></div>
+                <div class="ex-track"><div class="ex-bar" id="dlr-ex-bar"></div></div>
+            </div>
         </div>
         <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
-        <div class="bin drag">
+        <div class="bin">
+        <div class="drag">
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
+        </div>
         <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div>
             <div class="row" style="margin-top:6px">
                 <textarea id="dlr-queue" rows="2" style="flex:1;resize:vertical;font:inherit;font-size:12px;
@@ -1582,34 +1618,36 @@
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
             <div class="more-body" id="dlr-more-b"><div>
-                <div class="row">
-                    <label>并发线程</label>
-                    <input type="number" id="dlr-thread" min="1" max="16" value="5">
-                    <label style="min-width:48px">重试</label>
-                    <input type="number" id="dlr-retry" min="1" max="10" value="3">
+                <div class="mrow">
+                    <div class="row"><label>并发线程</label>
+                        <input type="number" id="dlr-thread" min="1" max="16" value="5"></div>
+                    <div class="row"><label>重试</label>
+                        <input type="number" id="dlr-retry-num" min="1" max="10" value="3"></div>
                 </div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-smart">智能调度（贪心优先 + 并发自适应）</label></div>
-                <div class="row"><label class="chk" title="默认关闭。开启后起止点会对齐到关键帧（精度可达帧级），但需要先下载完整回放再裁剪，流量比切片对齐多。">
-                    <input type="checkbox" id="dlr-frameclip">帧级精确截取（实验性 · 默认关）</label></div>
-                <div class="row">
-                    <label>面板状态</label>
-                    <select id="dlr-mini-def" style="flex:1">
-                        <option value="0" selected>默认展开</option>
-                        <option value="1">默认收缩</option>
-                    </select>
+                <div class="mrow">
+                    <div class="row"><label>面板状态</label>
+                        <select id="dlr-mini-def">
+                            <option value="0" selected>默认展开</option>
+                            <option value="1">默认收缩</option>
+                        </select></div>
+                    <div class="row"><label>更新源</label>
+                        <select id="dlr-updsrc">
+                            <option value="gitee">Gitee（默认）</option>
+                            <option value="github">GitHub</option>
+                            <option value="auto">自动</option>
+                        </select></div>
                 </div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label></div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label></div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label></div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败时通知我</label></div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败时提示音</label></div>
-                <div class="row">
-                    <label>更新源</label>
-                    <select id="dlr-updsrc" style="flex:1">
-                        <option value="gitee">Gitee（国内推荐，默认）</option>
-                        <option value="github">GitHub</option>
-                        <option value="auto">自动（先 GitHub，不通再 Gitee）</option>
-                    </select>
+                <div class="grid2">
+                    <label class="chk"><input type="checkbox" id="dlr-smart">智能调度</label>
+                    <label class="chk" title="默认关闭。开启后起止点会对齐到关键帧，但需要先下载完整回放再裁剪，流量更多。">
+                        <input type="checkbox" id="dlr-frameclip">帧级精确截取</label>
+                    <label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label>
+                    <label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label>
+                    <label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label>
+                    <label class="chk" title="拖动面板时自动收起「更多设置」与输出区。默认开启。">
+                        <input type="checkbox" id="dlr-drag-collapse">拖动时自动收起设置</label>
+                    <label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
+                    <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
                 </div>
                 <div class="tip">预取播放地址与切片索引，打开页面后无需等待即可直接下载。</div>
             </div></div>
@@ -1677,9 +1715,21 @@
         close.addEventListener('click', () => {
             try { URL.revokeObjectURL(v.src); } catch (e) {}
             box.innerHTML = '';
-            box.style.display = 'none';
+            box.classList.remove('show');   // 收起（带动画）
+            box.style.height = '0px';
         });
-        box.style.display = 'block';
+        // 展开（带动画）。用 class + 内联 height，不用 display（display 无法过渡）。
+        void box.offsetWidth;               // 强制回流，确保连续两次调用也能重放动画
+        box.classList.add('show');
+        // 实测内容高度写内联：内联优先级高于样式表，不受 CSS 特异性竞争影响。
+        // 量高前先解除 height 约束：收起态下 scrollHeight 恒为 0。
+        requestAnimationFrame(() => {
+            const prevH = box.style.height;
+            box.style.height = 'auto';
+            const h = box.scrollHeight;
+            box.style.height = prevH || '0px';
+            if (h > 0) box.style.height = h + 'px';
+        });
     }
 
     // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
@@ -1695,6 +1745,14 @@
     // 截取输入的单位上限跟随回放总时长（v2.3.0）。prep() 与 init() 是兄弟函数，
     // 作用域不通，所以用模块级钩子把「总时长已知」这件事传出去。
     let onClipDur = null;
+
+    // 拖拽状态。放模块级是因为 setMini/横条 click 的绑定早于拖拽代码所在位置，
+    // 放局部会撞 TDZ（虽然回调延迟执行时侥幸不报错，但依赖初始化顺序很脆弱）。
+    let dragging = false, dragOffX = 0, dragOffY = 0;
+    let dragStartX = 0, dragStartY = 0, dragPending = false;
+    let moved = false;                 // 本轮是否真的越过阈值移动过（区分拖/点）
+    let suppressExpandClickAt = 0;     // 最近一次「拖完」的时刻；click 在 350ms 内到达则忽略
+    const DRAG_THRESHOLD = 4;
 
     // ---------- IndexedDB 断点缓存：跨刷新/关页保留已下载切片 ----------
     // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）。
@@ -2639,7 +2697,25 @@
         const setMore = (open) => {
             moreT.setAttribute('aria-expanded', open ? 'true' : 'false');
             moreB.classList.toggle('open', open);
-            };
+            // 展开高度按内容实测后写内联 style。内联优先级高于样式表，不依赖
+            // CSS 特异性计算（展开值被收起值压住是这个坑的教训）。
+            //
+            // 关键：不能在收起状态下直接读 scrollHeight——此时容器 height:0 +
+            // overflow:hidden，内容被压扁，scrollHeight 恒为 0，于是永远写不进
+            // 高度，展开动画也就不发生。先把约束临时解除再量，量完恢复。
+            if (open) {
+                const prevH = moreB.style.height;
+                const prevV = moreB.style.visibility;
+                moreB.style.height = 'auto';
+                moreB.style.visibility = 'hidden';   // 量高时不可见，避免闪一下
+                const h = moreB.scrollHeight;
+                moreB.style.height = prevH || '0px';
+                moreB.style.visibility = prevV || '';
+                if (h > 0) moreB.style.height = h + 'px';
+            } else {
+                moreB.style.height = '0px';
+            }
+        };
         moreT.addEventListener('click', () =>
             setMore(moreT.getAttribute('aria-expanded') !== 'true'));
 
@@ -2670,7 +2746,7 @@
         const autoThreads = Math.max(4, Math.min(16,
             (navigator.hardwareConcurrency || 4) * 2));
         bindNum('dlr-thread', 'dlr_thread', 1, 16, autoThreads);
-        bindNum('dlr-retry', 'dlr_retry', 1, 10, 3);
+        bindNum('dlr-retry-num', 'dlr_retry', 1, 10, 3);
         const thrTip = document.querySelector('#dlr-more-b .tip');
         if (thrTip) {
             thrTip.textContent = '并发已自动识别为 ' + autoThreads +
@@ -2682,22 +2758,26 @@
         // 让人误以为坏了），系统通知默认开（无声、可靠、点一下能回面板）
         // 智能调度：默认开启。关掉后并发固定为上面设定的线程数。
         bindChk('dlr-smart', 'dlr_smart', true);
-        // 帧级精确截取：默认关闭（标为实验性）。它需要逐帧解析视频流找关键帧，
-        // 对 CPU 和时长都有额外开销，收益只在需要精确起止点时才明显。
+        // 帧级精确截取：默认关闭。切片边界对齐已能满足多数需求，帧级精修要
+        // 多下一遍完整回放（依赖完整切片集建立时间轴基准），流量代价不小，
+        // 所以交给用户按需开启——面板上有醒目提示告诉他在哪开。
         bindChk('dlr-frameclip', 'dlr_frameclip', false);
+        // 拖动时自动收起「更多设置」/输出区（默认开）。拖拽逻辑读同一个键。
+        bindChk('dlr-drag-collapse', 'dlr_drag_collapse', true);
 
+        // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下。
         // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。
-        // 链接由提示更新函数在运行时生成（晚于此处执行），直接
+        // 链接由 setClipTip() 在运行时生成（晚于此处执行），直接
         // getElementById('dlr-open-frameclip') 此刻拿到 null，绑定会静默失效；
-        // 委托则无论链接何时重建都生效。
+        // 委托则无论链接何时重建都生效——applyClipUnit 每次改提示都会换新节点。
         const clipTipEl = $('dlr-clip-tip');
         if (clipTipEl) {
             clipTipEl.addEventListener('click', (e) => {
                 const a = e.target.closest && e.target.closest('#dlr-open-frameclip');
                 if (!a) return;
                 e.preventDefault();
-                const mt2 = $('dlr-more-t'), mb2 = $('dlr-more-b');
-                if (mt2 && mb2 && !mb2.classList.contains('open')) mt2.click();
+                const mt = $('dlr-more-t'), mb = $('dlr-more-b');
+                if (mt && mb && !mb.classList.contains('open')) mt.click();
                 const chk = $('dlr-frameclip');
                 const lab = chk && chk.closest('.chk');
                 if (lab) {
@@ -3007,7 +3087,22 @@
 
         // 收缩 / 展开：不用时缩成一个小图标，状态持久化
         // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
-        const applyMini = () => panel.classList.toggle('mini', miniState);
+        const applyMini = () => {
+        panel.classList.toggle('mini', miniState);
+        // 收起态横条的高度用内联写入（内联必胜样式表，避开特异性竞争）。
+        const ex = panel.querySelector('.expand');
+        if (ex) {
+            if (miniState) {
+                const prevH = ex.style.height;
+                ex.style.height = 'auto';        // 量高前先解除约束，否则 scrollHeight 为 0
+                const h = ex.scrollHeight;
+                ex.style.height = prevH || '0px';
+                if (h > 0) ex.style.height = h + 'px';
+            } else {
+                ex.style.height = '0px';
+            }
+        }
+    };
         // 归一化：'1'/1/true/'true' = 收缩，'0'/0/false/'false' = 展开，缺省 = 展开。
         // 历史上 dlr_mini 存过布尔/字符串、dlr_mini_def 存过数字，严格 === 会漏判，
         // 导致「面板实际收缩、下拉框却显示默认展开」。
@@ -3047,7 +3142,14 @@
 
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
-        exp.addEventListener('click', () => setMini(false));
+        exp.addEventListener('click', () => {
+            // 刚拖完就松手的那一下 click 不算「点开」——否则拖一下面板就弹开了。
+            if (suppressExpandClickAt && Date.now() - suppressExpandClickAt < 350) {
+                suppressExpandClickAt = 0;
+                return;
+            }
+            setMini(false);
+        });
         col.addEventListener('click', () => {
             // 收缩后收缩条仍显示实时进度（标题+进度条），因此不再禁止下载中收起
             setMini(true);
@@ -3183,7 +3285,8 @@
         // 位置持久化：只存用户拖过之后的坐标；没拖过就保持 CSS 的右下角默认位，
         // 这样窗口变小/变大时默认位依然正确（存死坐标会在小窗口下越界）。
         const POS_KEY = 'dlr_pos';
-        let dragging = false, dragOffX = 0, dragOffY = 0;
+
+
 
         const applyPos = (x, y) => {
             const r = panel.getBoundingClientRect();
@@ -3200,29 +3303,110 @@
             if (!m) return;
             applyPos(parseFloat(m[1]), parseFloat(m[2]));
         };
-        const handle = panel.querySelector('.drag');
-        if (handle) {
+        // 拖拽把手有��个：展开态是标题区(.bin)，收起态是横条(.expand)。
+        // 只绑一个的话，收起后就抓不到东西了——用户反馈的正是这个。
+        const handles = panel.querySelectorAll('.drag');
+        // 「拖拽时自动收起更多设置与输出区」——可关。拖着面板时那些折叠区
+        // 只会碍事（还可能拖动过程中误触展开动画），默认自动收起。
+        let autoCollapseOnDrag = true;
+        try {
+            const av = GM_getValue('dlr_drag_collapse');
+            if (av !== undefined && av !== null) autoCollapseOnDrag = !!av;
+        } catch (e) { }
+        // 勾选变化立刻生效，不必刷新页面
+        const dragCollapseChk = $('dlr-drag-collapse');
+        if (dragCollapseChk) {
+            dragCollapseChk.addEventListener('change', () => {
+                autoCollapseOnDrag = dragCollapseChk.checked;
+            });
+        }
+        const collapseForDrag = () => {
+            if (!autoCollapseOnDrag) return;
+            const mt = $('dlr-more-t'), mb = $('dlr-more-b');
+            if (mt && mb && mb.classList.contains('open')) {
+                mb.dataset.preDragOpen = '1';
+                setMore(false);
+            }
+            // 预览区直接隐藏（有内容时它会自己撑高，留着反而碍事），
+            // 但记下原值，拖完恢复——不能一拖就永久消失。
+            const pv = $('dlr-preview');
+            if (pv && pv.classList.contains('show')) {
+                pv.dataset.preDragShown = '1';
+                pv.classList.remove('show');
+                pv.style.height = '0px';
+            }
+        };
+        // 只有落在「控件之外」的按下才开始拖拽。
+        // 这条很关键：拖拽区 .bin 包住了整个表单（链接框/文件名/分辨率/截取…），
+        // 若不分��就一律 preventDefault，区域内所有输入框和下拉框都收不到焦点，
+        // 整个面板变成「只能看不能改」——用户实测反馈的正是这个问题。
+        // 排除「表单控件」和「收起/展开按钮」——它们各自有原生交互，不能被拖拽劫持。
+        // 注意不能把 .expand 写进排除表：它本身就是收起态的拖拽把手，
+        // 排除掉会让收起后完全拖不动（这正是 2.4.0 的 bug）。
+        // 只在「不是把手自身」时才排除：点横条 = 拖动，横条内的 .collapse 才排除。
+        const onControl = (t, self) => {
+            if (!t) return false;
+            if (t.closest('input,select,textarea,button,a,label,[contenteditable="true"]')) return true;
+            const c = t.closest('.collapse');
+            return !!c;
+        };
+        handles.forEach((handle) => {
             handle.addEventListener('mousedown', (e) => {
                 // 只认左键；别抢输入框/按钮上的手势
                 if (e.button !== 0) return;
+                // 落在控件上 → 完全不管，浏览器原生行为（聚焦、展开下拉）照旧
+                if (onControl(e.target, handle)) return;
+                // 收起态横条上单击是「展开」，拖动阈值内不算拖——否则
+                // 用户想点开面板却因为手抖而移动了它。
+                if (panel.classList.contains('mini')) {
+                    dragStartX = e.clientX; dragStartY = e.clientY;
+                    dragPending = true;
+                }
                 const r = panel.getBoundingClientRect();
                 dragging = true;
+                moved = false;
                 dragOffX = e.clientX - r.left;
                 dragOffY = e.clientY - r.top;
+                collapseForDrag();
                 panel.classList.add('dragging');
                 e.preventDefault();   // 防止拖出文字选中 / 触发原生拖拽
             });
-        }
+        });
+
         window.addEventListener('mousemove', (e) => {
             if (!dragging) return;
+            if (dragPending) {
+                const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+                if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+                dragPending = false;   // 越过阈值，这次 mousemove 才是真拖拽
+            }
             applyPos(e.clientX - dragOffX, e.clientY - dragOffY);
+            moved = true;
         });
         window.addEventListener('mouseup', () => {
             if (!dragging) return;
             dragging = false;
+            dragPending = false;
             panel.classList.remove('dragging');
+            // 恢复拖拽时被折叠的更多设置与预览区
+            const mb2 = $('dlr-more-b');
+            if (mb2 && mb2.dataset.preDragOpen === '1') { setMore(true); delete mb2.dataset.preDragOpen; }
+            const pv2 = $('dlr-preview');
+            if (pv2 && 'preDragShown' in pv2.dataset) {
+                pv2.classList.add('show');
+                const prevH2 = pv2.style.height;
+                pv2.style.height = 'auto';
+                const hh = pv2.scrollHeight;
+                pv2.style.height = prevH2 || '0px';
+                if (hh > 0) pv2.style.height = hh + 'px';
+                delete pv2.dataset.preDragShown;
+            }
             const r = panel.getBoundingClientRect();
             GM_setValue(POS_KEY, Math.round(r.left) + ',' + Math.round(r.top));
+            // 拖过之后不要再触发横条的「点击展开」——否则拖一下就弹开了。
+            // 用时间戳而不是标志位：click 事件紧跟 mouseup 在同一轮派发，
+            // setTimeout(...,0) 清标志的回调会先跑，导致标志提前失效。
+            suppressExpandClickAt = moved ? Date.now() : 0;
         });
 
         // 快捷键：一律带 modifier 或用安全键，避免和输入法/网页快捷键打架。
@@ -3265,27 +3449,30 @@
         // ---------- 截取时间输入：单位上限跟随回放总时长（v2.3.0） ----------
         // 时长未知时只规范化已填文本；解析出总时长后才知道该不该用 hh:mm:ss。
         let clipUnit = 'mm:ss';
+        // 提示行结构拆成三段：纯文本 + 跳转链接 + 纯文本尾巴。
+        // 不能用 tip.textContent = ... 整体覆写——那会把里面的 <a> 一起替换掉，
+        // 链接会在启动时被无声抹掉（textContent 赋值会连子节点一起干掉）。
+        const setClipTip = (durText) => {
+            const tip = $('dlr-clip-tip');
+            if (!tip) return;
+            tip.textContent = durText ? durText + ' ' : '';
+            const a = document.createElement('a');
+            a.href = '#';
+            a.id = 'dlr-open-frameclip';
+            a.style.cssText = 'color:#6f9bff;cursor:pointer;text-decoration:underline';
+            a.textContent = '点这里打开「帧级精确截取」';
+            tip.appendChild(a);
+            tip.appendChild(document.createTextNode('——在「更多设置」里，开启后会先下载完整回放再裁剪，流量更多。'));
+        };
         const applyClipUnit = (totalDurSec) => {
             const hint = clipTimeHint(totalDurSec);
             clipUnit = hint.unit;
-            const fromEl = $('dlr-from'), toEl = $('dlr-to'), tip = $('dlr-clip-tip');
+            const fromEl = $('dlr-from'), toEl = $('dlr-to');
             if (fromEl) fromEl.placeholder = '开始 ' + hint.unit;
             if (toEl) toEl.placeholder = '结束 ' + hint.unit;
-            // 提示行结构拆成三段：纯文本 + 跳转链接 + 纯文本尾巴。
-            // 不能用 tip.textContent = ... 整体覆写——那会把里面的 <a> 一起替换掉，
-            // 链接会在启动时被无声抹掉（textContent 赋值会连子节点一起干掉）。
-            if (tip) {
-                tip.textContent = hint.capHint
-                    ? '留空为整段；本回放总时长 ' + hint.capHint + '，可填到 ' + hint.unit + '。'
-                    : '留空为整段。当前按切片边界对齐（约 30 秒粒度）。想要帧级精度？';
-                const a = document.createElement('a');
-                a.href = '#';
-                a.id = 'dlr-open-frameclip';
-                a.style.cssText = 'color:#6f9bff;cursor:pointer;text-decoration:underline';
-                a.textContent = '点这里打开「帧级精确截取」';
-                tip.appendChild(a);
-                tip.appendChild(document.createTextNode('——在「更多设置」里，开启后会先下载完整回放再裁剪，流量更多。'));
-            }
+            setClipTip(hint.capHint
+                ? '留空为整段；本回放总时长 ' + hint.capHint + '，可填到 ' + hint.unit + '。'
+                : '留空为整段。当前按切片边界对齐（约 30 秒粒度）。想要帧级精度？');
             [fromEl, toEl].forEach((el) => {
                 if (el && el.value) el.value = normalizeClipText(el.value, clipUnit);
             });
@@ -3339,7 +3526,7 @@
                             res: resSel.value,
                             fmt: $('dlr-fmt').value,
                             threads: parseInt($('dlr-thread').value, 10) || 8,
-                            retry: parseInt($('dlr-retry').value, 10) || 3,
+                            retry: parseInt($('dlr-retry-num').value, 10) || 3,
                             name: '',          // 每个回放各自用标题，不共用一个文件名
                             stamp: $('dlr-stamp').checked,
                             clipFrom: null, clipTo: null,
@@ -3399,7 +3586,7 @@
             const opts = {
                 fmt: $('dlr-fmt').value,
                 threads: Math.max(1, Math.min(16, parseInt($('dlr-thread').value, 10) || 5)),
-                retry: Math.max(1, Math.min(10, parseInt($('dlr-retry').value, 10) || 3)),
+                retry: Math.max(1, Math.min(10, parseInt($('dlr-retry-num').value, 10) || 3)),
                 stamp: $('dlr-stamp').checked,
                 clipFrom,
                 clipTo,
