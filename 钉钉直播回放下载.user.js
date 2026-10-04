@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.0.0
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      2.1.0
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -1208,6 +1208,7 @@
                     <label style="min-width:48px">重试</label>
                     <input type="number" id="dlr-retry" min="1" max="10" value="3">
                 </div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-smart">智能调度（贪心优先 + 并发自适应）</label></div>
                 <div class="row">
                     <label>面板状态</label>
                     <select id="dlr-mini-def" style="flex:1">
@@ -1550,6 +1551,46 @@
         return null;
     }
 
+    // 抽样探测多片体积，给贪心调度用。
+    // 只探头部与尾部若干片（1 字节 Range，不下载整片）：HLS 切片体积通常只有
+    // 码率波动造成的轻微差异，抽样足够反映「谁更大」；全量探测反而拖慢启动。
+    // 关键：BYTERANGE 分片的 content-range 反映的是整个文件而非这一段，
+    // 对它们返回 null（贪心退回原序），别拿错的体积做决策。
+    async function probeSegSizes(segs, sample) {
+        const n = segs.length;
+        if (!n) return null;
+        const want = Math.max(2, sample || 6);
+        // 头部 3 片 + 尾部 3 片，不重叠；片数少时全探
+        const picks = [];
+        if (n <= want) {
+            for (let i = 0; i < n; i++) picks.push(i);
+        } else {
+            const half = Math.max(1, Math.floor(want / 2));
+            for (let i = 0; i < half; i++) picks.push(i);
+            for (let i = n - (want - half); i < n; i++) picks.push(i);
+        }
+        const sizes = new Array(n).fill(null);
+        let got = 0;
+        const CONC = Math.min(4, picks.length);
+        let cursor = 0;
+        await Promise.all(Array.from({ length: CONC }, async () => {
+            while (cursor < picks.length) {
+                const i = picks[cursor++];
+                const sg = segs[i];
+                if (!sg || (sg.byterange && sg.byterange.length)) continue;
+                try {
+                    const r = await gmx({ url: sg.url, binary: true, headers: { Range: 'bytes=0-0' } });
+                    const hdr = String(r.responseHeaders || '');
+                    const m = hdr.match(/content-range:\s*bytes\s+\d+-\d+\/(\d+)/i)
+                        || hdr.match(/content-length:\s*(\d+)/i);
+                    const v = m ? parseInt(m[1], 10) : null;
+                    if (v > 0) { sizes[i] = v; got++; }
+                } catch (e) { /* 单片探测失败不影响整体 */ }
+            }
+        }));
+        return got >= 2 ? sizes : null;
+    }
+
     // ---------- 预解析：csrf → 播放地址 → m3u8，可被 run() 复用 ----------
     // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
     let prepCache = null;      // {key, at, token, model, parsed}
@@ -1588,6 +1629,83 @@
         }
         prepCache = { key, at: Date.now(), token, model, parsed, resInfo };
         return prepCache;
+    }
+
+    // ---------- 智能调度：贪心优先级 + 自适应并发 ----------
+    // 为什么要调度而不是顺序取：HLS 切片时长不完全相等，而且「谁先下完」决定了
+    // 尾部长度。贪心策略——优先下体积最大的切片，让「最长的那根线」尽早启动，
+    // 整体完成时间由最慢的一片决定，先啃硬骨头能把尾部压缩下来。
+    // 自适应并发：并发开太高会互相抢带宽甚至被 CDN 限流，全低又浪费时间。
+    // 做法是滑动窗口测速——连续若干次成功且速度没有崩，就加一个线程；
+    // 一旦出现失败或速度骤降，先减线程再重试。
+    const SMART = { enabled: true, min: 1, max: 16 };
+
+    // 构造贪心取片顺序：体积大的优先，同体积按原序（保证可复现）。
+    // sizes 缺失（未知体积）时按原序排，不要因为缺数据就打乱。
+    function greedyOrder(sizes, skip) {
+        const n = sizes.length;
+        const idx = [];
+        for (let i = 0; i < n; i++) {
+            if (skip && skip[i]) continue;      // 已在断点缓存里的片跳过
+            idx.push(i);
+        }
+        idx.sort((a, b) => {
+            const sa = sizes[a], sb = sizes[b];
+            const ha = typeof sa === 'number' && sa > 0;
+            const hb = typeof sb === 'number' && sb > 0;
+            if (ha && hb && sb !== sa) return sb - sa;   // 大的在前
+            if (ha !== hb) return ha ? -1 : 1;           // 已知体积优先于未知
+            return a - b;                                  // 同类按原序，稳定
+        });
+        return idx;
+    }
+
+    // 自适应并发控制器。每完成/失败一片调用一次 note()，返回当前建议并发。
+    // 设计成纯计数器 + 回调，便于在测试里脱离网络单独验证行为。
+    function makeConcurrencyGovernor(opts) {
+        const min = Math.max(1, opts.min || 1);
+        const max = Math.max(min, opts.max || 16);
+        let cur = Math.max(min, Math.min(max, opts.start || min));
+        let winDone = 0, winBytes = 0, winMs = 0;
+        let lastSpeed = 0;
+        const WINDOW = opts.window || 6;        // 每 6 片结算一次
+        const WIN_MS = opts.winMs || 4000;     // 或每 4 秒结算一次
+        let firstT = 0;
+
+        return {
+            get value() { return cur; },
+            // 成功一片：把它的字节数记进窗口，窗口满则尝试加一个线程。
+            // 速度由累计字节/窗口时长算，不看单片瞬时值——瞬时值噪声太大，
+            // 一片 3MB/0.2s 和一片 10KB/0.01s 都可能只是 CDN 抖动。
+            note(size, speedBps) {
+                const now = Date.now();
+                if (!firstT) firstT = now;
+                winDone++;
+                winBytes += (typeof size === 'number' && size > 0) ? size : 0;
+                winMs = now - firstT;
+                if (speedBps) lastSpeed = speedBps;
+                // 结算条件用「片数窗口」为准、时间为辅。只靠时间在极快网络下
+                // 会在同一毫秒内算不出平均速度，导致并发永远不涨。
+                if (winDone >= WINDOW || winMs >= WIN_MS) {
+                    const avg = winMs > 0 ? winBytes / (winMs / 1000) : winBytes / WINDOW;
+                    if (avg > 0 && cur < max) cur++;
+                    winDone = 0; winBytes = 0; winMs = 0; firstT = now;
+                }
+                return cur;
+            },
+            // 失败一片：立刻降并发（先退避再重试，别继续硬打）。
+            // 注意 winFail 的生命周期——它只该影响「当前这一个窗口」。
+            // 早先的实现里 winFail 一旦置 1 就再没被清过（结算时才清，
+            // 但结算被 winFail===0 卡住，形成死锁），结果一次失败之后
+            // 并发永远涨不回来。现在：降并发 + 重开窗口，但不置抑制标记，
+            // 因为「降并发」本身就是这次失败带来的惩罚，不需要再叠一层。
+            fail() {
+                if (cur > min) cur--;
+                winDone = 0; winBytes = 0; winMs = 0; firstT = 0;
+                return cur;
+            },
+            stats() { return { cur, min, max, lastSpeed }; },
+        };
     }
 
     // ---------- 下载队列：多个回放顺序执行 ----------
@@ -1696,7 +1814,7 @@
                 (parsed.encrypted ? '   AES-128 加密' : '') +
                 (parsed.fmp4 ? '   fMP4' : '   TS'));
             // 体积预估：Range 拉首片 1 字节读 Content-Range → 单片 × 片数
-            let estTotal = null;
+            let estTotal = null, segSizes = null;
             if (segs.length) {
                 try {
                     const one = await probeSegBytes(segs[0].url);
@@ -1706,6 +1824,10 @@
                             '（单片 ' + fmtBytes(one) + ' × ' + segs.length + ' 片）');
                     }
                 } catch (e) { /* 预估失败静默 */ }
+            }
+            // 抽样探测各片真实体积，供贪心调度排序（探不到就退回原序，不影响下载）
+            if (segs.length >= 4) {
+                try { segSizes = await probeSegSizes(segs, 6); } catch (e) { segSizes = null; }
             }
             progressSet(P.dlStart, '下载');
             setPhase('download');   // 进入下载阶段：收缩条转绿
@@ -1752,6 +1874,7 @@
             }
             const failures = [];   // {index, url, reason}
             let cursor = 0, done = resumed;
+            let active = 0;         // 当前在途的切片请求数（自适应并发的依据）
             const keyCache = new Map();
             const span = P.dlEnd - P.dlStart;
             // 速度（EMA 平滑）+ 预计剩余时间
@@ -1777,43 +1900,96 @@
                 progressSet(P.dlStart + (done / segs.length) * span, label);
             };
 
+            // 智能调度：贪心取片顺序 + 自适应并发。
+            // 切片体积未知时（探测失败）greedyOrder 会退回原序，不会打乱下载。
+            // 开关状态每次下载时读一次（用户可能在下载中途改）
+            let smartOn = SMART.enabled;
+            try {
+                const v = GM_getValue('dlr_smart');
+                if (v !== undefined && v !== null) smartOn = !!v;
+            } catch (e) { }
+            const useSmart = smartOn && SMART.max > SMART.min;
+            let order = null;
+            if (useSmart) {
+                // 优先用抽样探测到的真实体积；抽不出来就退回原序
+                const sizes = segSizes && segSizes.some((x) => x > 0) ? segSizes : segs.map(() => null);
+                const known = sizes.filter((x) => x > 0).length;
+                order = greedyOrder(sizes, datas);
+                if (known) {
+                    const mx = Math.max.apply(null, sizes.filter((x) => x > 0));
+                    const mn = Math.min.apply(null, sizes.filter((x) => x > 0));
+                    appendLog('   调度：贪心优先下大切片（已抽样 ' + known + '/' + segs.length +
+                        ' 片，' + fmtBytes(mn) + '~' + fmtBytes(mx) + '），并发 ' +
+                        SMART.min + '~' + SMART.max + ' 自适应');
+                } else {
+                    appendLog('   调度：切片体积未知，按原序下载，并发自适应 ' + SMART.min + '~' + SMART.max);
+                }
+            }
+            let oCursor = 0;
+            const gov = useSmart ? makeConcurrencyGovernor({
+                min: SMART.min, max: SMART.max,
+                start: Math.max(SMART.min, Math.min(SMART.max, opts.threads)),
+            }) : null;
+            // 活跃 worker 数的上限由 gov 动态控制；关掉智能调度时固定为用户设定值
+            const MAXW = useSmart ? SMART.max : opts.threads;
+
             const worker = async () => {
                 while (true) {
                     if (DL.cancel) return;
                     // 暂停：原地等待，恢复后继续取下一片
                     while (DL.pause && !DL.cancel) await new Promise((r) => setTimeout(r, 120));
                     if (DL.cancel) return;
-                    let i = cursor++;
-                    if (i >= segs.length) return;
-                    // 跳过断点缓存里已有的切片
-                    while (i < segs.length && datas[i]) i = cursor++;
+                    // 自适应并发：活跃数超过当前建议就原地等，别硬抢
+                    if (gov && active >= gov.value) {
+                        await new Promise((r) => setTimeout(r, 60));
+                        continue;
+                    }
+                    let i;
+                    if (order) {
+                        if (oCursor >= order.length) return;
+                        i = order[oCursor++];
+                    } else {
+                        if (cursor >= segs.length) return;
+                        i = cursor++;
+                        // 跳过断点缓存里已有的切片
+                        while (i < segs.length && datas[i]) i = cursor++;
+                    }
                     if (i >= segs.length) return;
                     const seg = segs[i];
+                    if (!seg) return;
+                    active++;
                     let lastErr = null;
                     for (let t = 0; t < opts.retry; t++) {
-                        if (DL.cancel) return;
+                        if (DL.cancel) { active--; return; }
                         while (DL.pause && !DL.cancel) await new Promise((r) => setTimeout(r, 120));
-                        if (DL.cancel) return;
+                        if (DL.cancel) { active--; return; }
                         try {
                             const got = await downloadSegment(seg, keyCache, 0);
                             datas[i] = got.bytes;
                             gotBytes += got.bytes.length;
                             haveBytes += got.bytes.length;
                             done++;
+                            if (gov) gov.note(got.bytes.length);
                             updProgress();
                             if (done % 10 === 0 || done === segs.length) appendLog('   ' + done + '/' + segs.length);
                             lastErr = null;
                             break;
                         } catch (e) {
                             lastErr = e;
+                            if (gov) gov.fail();
                             // 指数退避，避免瞬时失败时立刻重试打爆 CDN
                             if (t < opts.retry - 1) await new Promise((r) => setTimeout(r, 400 * (t + 1)));
                         }
                     }
+                    active--;
                     if (lastErr) failures.push({ index: i + 1, url: seg.url, reason: lastErr.message });
                 }
             };
-            await Promise.all(Array.from({ length: opts.threads }, worker));
+            await Promise.all(Array.from({ length: MAXW }, worker));
+            if (gov) {
+                appendLog('   调度结束：并发收敛于 ' + gov.value +
+                    (gov.stats().lastSpeed ? '，末速约 ' + fmtBytes(gov.stats().lastSpeed) + '/s' : ''));
+            }
 
             // 中断/删除：保留（或清空）已下载切片供下次续传，本次不算失败
             if (DL.cancel) {
@@ -2081,6 +2257,8 @@
         const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
         // 完成/失败通知：提示音默认关（浏览器自动播放策略常拦默认开的声音，
         // 让人误以为坏了），系统通知默认开（无声、可靠、点一下能回面板）
+        // 智能调度：默认开启。关掉后并发固定为上面设定的线程数。
+        bindChk('dlr-smart', 'dlr_smart', true);
         bindChk('dlr-notify-desktop', 'dlr_notify_desktop', true);
         bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
         // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，

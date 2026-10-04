@@ -930,6 +930,87 @@ section('队列输入解析');
     const many = Array.from({ length: 200 }, (_, i) => RID + ' uuid-' + i).join('\n');
     eq(parseQueueInput(many).out.length, 200, '200 行正常解析');
 }
+
+// ---------------------------------------------------------------- 智能调度
+section('智能调度');
+{
+    const { greedyOrder, makeConcurrencyGovernor } = loadFns(['greedyOrder', 'makeConcurrencyGovernor']);
+
+    // --- 贪心取片顺序 ---
+    eq(greedyOrder([10, 20, 30], null), [2, 1, 0], '大的切片优先');
+    eq(greedyOrder([30, 20, 10], null), [0, 1, 2], '本来就有序时保持');
+    eq(greedyOrder([10, 30, 20, 40], null), [3, 1, 2, 0], '最大的一片排最前');
+    // 同体积按原序，保证可复现（否则每次刷新下载顺序都变，缓存命中会抖）
+    eq(greedyOrder([10, 10, 10], null), [0, 1, 2], '同体积按原序');
+    eq(greedyOrder([10, 10, 10, 10], null), [0, 1, 2, 3], '同体积长列表也稳定');
+    // 未知体积不能打乱已知体积的优先级
+    eq(greedyOrder([null, 50, null], null), [1, 0, 2], '已知体积优先于未知');
+    eq(greedyOrder([null, null, null], null), [0, 1, 2], '全部未知 → 原序');
+    // 断点缓存里已有的片要跳过
+    const skip = [true, false, true, false];
+    eq(greedyOrder([10, 20, 30, 40], skip), [3, 1], '跳过已在缓存的片');
+    eq(greedyOrder([10, 20, 30, 40], [true, true, true, true]), [], '全部已缓存 → 空序列');
+    eq(greedyOrder([], null), [], '空列表');
+    // 结果长度必须与可用片数一致，且每片只出现一次
+    const many = Array.from({ length: 30 }, (_, i) => (i * 37) % 11);
+    const ord = greedyOrder(many, null);
+    eq(ord.length, 30, '不丢片');
+    eq(new Set(ord).size, 30, '不重复');
+    // 非单调输入也要正确排序
+    eq(greedyOrder([5, 100, 3, 50, 7], null), [1, 3, 4, 0, 2], '乱序输入正确排序（100,50,7,5,3）');
+
+    // --- 自适应并发 ---
+    // 从 2 起步，全部成功 → 每个窗口加 1，直到上限
+    let g = makeConcurrencyGovernor({ min: 1, max: 4, start: 2, window: 2, winMs: 1e9 });
+    eq(g.value, 2, '初始并发 = start');
+    g.note(1000);
+    eq(g.value, 2, '未满窗口不加');
+    g.note(1000);
+    eq(g.value, 3, '满一个窗口 +1');
+    g.note(1000); g.note(1000);
+    eq(g.value, 4, '继续爬升');
+    g.note(1000); g.note(1000); g.note(1000); g.note(1000);
+    eq(g.value, 4, '不超过上限');
+
+    // 失败立刻降并发
+    g = makeConcurrencyGovernor({ min: 1, max: 8, start: 6, window: 4, winMs: 1e9 });
+    eq(g.value, 6, '起步 6');
+    eq(g.fail(), 5, '失败一次 → 降 1');
+    eq(g.fail(), 4, '再失败 → 降 2');
+    eq(g.fail(), 3, '继续降');
+    for (let i = 0; i < 10; i++) g.fail();
+    eq(g.value, 1, '一直失败降到下限');
+    for (let i = 0; i < 10; i++) g.fail();
+    eq(g.value, 1, '不跌破下限');
+
+    // 降过之后重新成功能回升（不是单向下降）
+    g = makeConcurrencyGovernor({ min: 1, max: 8, start: 4, window: 2, winMs: 1e9 });
+    g.fail();
+    eq(g.value, 3, '先降');
+    g.note(500, 1000); g.note(500, 1000);
+    eq(g.value, 4, '恢复后能回升');
+
+    // 字节数为 0 / 缺失时不加（速度算不出 0，不该误判为「很快」）
+    g = makeConcurrencyGovernor({ min: 1, max: 4, start: 1, window: 2, winMs: 1e9 });
+    g.note(0); g.note(0);
+    eq(g.value, 1, '零字节不加并发');
+    g = makeConcurrencyGovernor({ min: 1, max: 4, start: 1, window: 2, winMs: 1e9 });
+    g.note(undefined); g.note(null);
+    eq(g.value, 1, '缺字节数不加并发');
+
+    // start 超界要夹紧
+    eq(makeConcurrencyGovernor({ min: 2, max: 6, start: 99, window: 1, winMs: 1e9 }).value, 6, 'start 超上限 → 夹到 max');
+    eq(makeConcurrencyGovernor({ min: 2, max: 6, start: 0, window: 1, winMs: 1e9 }).value, 2, 'start 低于下限 → 夹到 min');
+    eq(makeConcurrencyGovernor({ min: 4, max: 2, start: 3, window: 1, winMs: 1e9 }).value, 4,
+        'max < min 时取 min 而不是产生非法区间');
+
+    // stats 能反映当前状态
+    g = makeConcurrencyGovernor({ min: 1, max: 8, start: 3, window: 5, winMs: 1e9 });
+    g.note(2000, 12345);
+    const st = g.stats();
+    eq([st.min, st.max], [1, 8], 'stats 含区间');
+    eq(st.lastSpeed, 12345, 'stats 含最近速度');
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
