@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.0.2）
+## 功能（v3.0.3）
 
 **核心**
 
@@ -61,7 +61,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 **面板外观**
 
 - **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
-- **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。
+- **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。 **v3.0.3 修复**：原先横向钳制只在拖动那一刻算一次，窗口缩小后没人重算——把面板拖到最右再缩窗口，面板会有一大半（实测 392px 宽的面板有 240px）跑到屏幕外，鼠标再也点不到、只能刷新页面找回。现窗口缩放时按上次坐标重新钳制一次，反复缩放也不会累积漂移。
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起。**在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起。
 - **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）。拖动面板时自动折叠「更多设置」与输出预览区，拖完自动恢复原状态——折叠区在拖动过程中只会碍事。不想这个行为可以在更多设置里关掉。
 - **面板视口自适应（v2.6.1）**：面板高度上限跟随窗口可用高度（`100vh - 140px`），超出部分在面板内滚动。**无论窗口多矮，全部展开也不会超出屏幕边界**——实测 700px 高的窗口下面板为 678px，正常笔记本视口完全够用，不必再为「设置展开后顶出屏幕」操心。
@@ -179,7 +179,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.0.2)
+## Features (v3.0.3)
 
 **Core**
 
@@ -229,7 +229,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 **Panel appearance**
 
 - **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur and a light border, letting the player show through; the state persists across reloads. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content (v2.9.5 fix).
-- **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it.
+- **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it. **v3.0.3 fix**: the horizontal clamp used to run only at drag time, and nothing recomputed it after a resize — drag the panel to the right edge and then shrink the window and most of it leaves the screen (measured: 240px of a 392px panel), the mouse can no longer reach it at all, and the only way back is reloading the page. The panel is now re-clamped against the last known position on every window resize, and repeated resizing does not accumulate drift.
 - **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
 - **Auto-collapse settings while dragging (v2.6.0)**: collapsible sections and the preview area fold away while you drag and are restored when you release; a toggle in 更多设置 (on by default) turns this off.
 - **Viewport-aware panel (v2.6.1)**: the panel's height is capped to the available window height (`100vh - 140px`) with the remainder scrolling inside. **Fully expanded, the panel never exceeds the screen** — measured at 678px in a 700px-tall window, which comfortably covers ordinary laptop viewports.

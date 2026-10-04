@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.2
+// @version      3.0.3
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -3570,6 +3570,9 @@
 
 
 
+        // 最近一次生效的视口坐标。窗口缩放后要靠它重新钳制 —— 拖过的面板用的是
+        // 存下来的 left/top 定值，窗口一小就跑到屏幕外去了（见下面的 resize 处理）。
+        let lastPos = null;
         const applyPos = (x, y) => {
             const r = panel.getBoundingClientRect();
             const p = posToRightBottom(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
@@ -3577,11 +3580,24 @@
             panel.style.top = p.top;
             panel.style.right = p.right;
             panel.style.bottom = p.bottom;
+            // 记下**钳制后**的坐标：下一轮 resize 要以它为基准，否则误差会逐次累积
+            lastPos = { x: parseFloat(p.left) || 0, y: parseFloat(p.top) || 0 };
             // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上。
             // 漏掉这一步的表现：拖动面板时光环停在原地不动，面板滑走了，
             // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）。
             try { syncRing(); } catch (e) { }
         };
+        // 窗口缩放后重新钳制面板位置。
+        // 缺陷表现：把面板拖到最右再缩小窗口，面板会有一大半跑到屏幕外
+        // （实测 1400px 窗口拖到右缘，缩到 760px 后 392px 宽的面板有 240px 在屏幕外，
+        //  占 -61%），而且**鼠标再也点不到它**——elementFromPoint 在任何可见位置都
+        // 返回不到面板，用户只能刷新页面找回。clampPanelPos 本来就有防越界的钳制，
+        // 只是缩放后没人再调用它。这里按上次的坐标重跑一次 applyPos 即可。
+        window.addEventListener('resize', () => {
+            try {
+                if (lastPos) applyPos(lastPos.x, lastPos.y);
+            } catch (e) { }
+        });
         const restorePos = () => {
             const raw = GM_getValue(POS_KEY, '');
             if (!raw) return;
