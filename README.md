@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.0.8）
+## 功能（v3.0.9）
 
 **核心**
 
@@ -179,7 +179,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.0.8)
+## Features (v3.0.9)
 
 **Core**
 

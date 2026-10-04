@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.8
+// @version      3.0.9
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -2852,8 +2852,26 @@
         ring.appendChild(ringBeam);
         document.body.appendChild(ring);
         // 光环跟随面板的位置和尺寸（含圆角）——SVG rect 几何
+        // 光环必须贴着**看得见的那块面板**，也就是 .body，而不是 #dlr-panel。
+        //
+        // 根因（v3.0.2~3.0.7 三次改错的地方）：#dlr-panel 只是外壳，它有
+        // `padding:14px 16px` 且 `background:transparent` —— 自身不可见；用户看到的
+        // 深色圆角面板是它内部的 .body。之前光环一直按 #dlr-panel 的盒子画，于是它永远
+        // 比可见面板大出一圈内边距（实测左右各 16px、上下各 14px），
+        // 看起来就是「在外面框出一大块地方」。这不是同步/时序问题，改多少次
+        // ResizeObserver、rAF、CSS 定位都不对 —— 参照对象本身就选错了。
+        //
+        // 例外：收缩成横条时 .body 被压成 0 高（grid-template-rows:0fr），
+        // 那时可见的是 .expand 横条，要改用它。
+        const ringTarget = () => {
+            const b = panel.querySelector('.body');
+            if (b && b.getBoundingClientRect().height > 1) return b;
+            const ex = panel.querySelector('.expand');
+            if (ex && ex.getBoundingClientRect().height > 1) return ex;
+            return panel;
+        };
         const syncRing = () => {
-            const r = panel.getBoundingClientRect();
+            const r = ringTarget().getBoundingClientRect();
             const W = r.width + 6, H = r.height + 6;
             ring.style.left = (r.left - 3) + 'px';
             ring.style.top = (r.top - 3) + 'px';
