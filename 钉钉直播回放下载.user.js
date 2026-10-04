@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.6
+// @version      3.0.7
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1369,20 +1369,34 @@
            SVG 用 pathLength=100 归一化周长，于是 dasharray 是纯比例（28 72），
            面板怎么变宽变窄，光带长度都占 28%，不需要按真实周长重算。
            rx 用百分比：描边落在面板圆角之外 1.5px 处，圆角随尺寸自适应。 */
+        /* 下载光环：面板最外层一圈流动的渐变光带（v3.0.7 重写）。
+           两个结构性决定，各自解决一类「追不上」：
+           1) 光环是 #dlr-panel 的直接子元素，尺寸交给 CSS（width/height:100%）。
+              浏览器自己保证它与面板同大——面板尺寸变化的来源有十几种
+              （自身 transition、子元素展开、内容换行、窗口缩放、字体加载），
+              JS 只能逐个挂事件去追，漏一次就永久错位（曾实测 20~187px）。
+           2) 光带用**旋转渐变**而不是 stroke-dasharray。
+              dasharray 需要「亮段长度 : 暗段长度」两个与周长相关的数值：要么写死
+              （面板一小就占满整圈，看起来全亮；面板一大就几乎看不见），要么按真实
+              周长逐帧重算。v3.0.5 曾用 pathLength=100 归一化来规避，但实测
+              <rect> 的 pathLength 并不可靠（真实周长 1184px 时按 100 单位分布的
+              dash 点不中描边），所以这条路是错的。
+              旋转渐变没有长度概念：渐变定义域是元素自身盒子，旋转的是整个渐变坐标系，
+              面板无论多大、什么比例，光带宽度与流速都恒定，且完全不碰周长。 */
         #dlr-ring{position:absolute;left:0;top:0;width:100%;height:100%;
             pointer-events:none;z-index:2;overflow:visible;
             opacity:0;transition:opacity 400ms ease-out}
         #dlr-ring.on{opacity:1}
-        #dlr-ring .ring-track{fill:none;stroke:rgba(61,110,255,.28);stroke-width:3;
-            vector-effect:non-scaling-stroke}
+        /* 轨道：整圈都有一层很淡的底色，让光环在未流到的地方也有轮廓 */
+        #dlr-ring .ring-track{fill:none;stroke:rgba(61,110,255,.22);stroke-width:3}
+        /* 光带本体：旋转渐变 + 沿描边流动的斜面。
+           这里的 rotate 是 CSS 变换，作用在渐变坐标系上（gradientTransform 由
+           SMIL 承担），与「旋转非正方形元素会翻转」无关——元素本身不转。 */
         #dlr-ring .ring-beam{fill:none;stroke-width:3.5;stroke-linecap:round;
-            filter:drop-shadow(0 0 5px rgba(61,110,255,.85));
-            animation:dlrRingDash 3s linear infinite}
-        /* pathLength=100 把真实周长（几百~几千 px）归一化成 100，
-           所以 dasharray 与 dashoffset 都可以写成固定的「比例」值。
-           动画一整周期正好走完归一化后的一圈，与面板实际大小无关。 */
-        @keyframes dlrRingDash{
-            from{stroke-dashoffset:0}
+            filter:drop-shadow(0 0 5px rgba(61,110,255,.75))}
+        /* 光带的流动由 SVG 内的 <animateTransform> 驱动（SMIL），没有 CSS 动画。
+           CSS 无法动画 gradientTransform，所以这里必须用 SMIL；
+           prefers-reduced-motion 下用 display:none 把它整体关掉。 */
             to{stroke-dashoffset:-100}
         }
         #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
@@ -1612,7 +1626,7 @@
         /* 尊重系统「减少动态效果」 */
         @media (prefers-reduced-motion:reduce){
             #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
-            #dlr-ring .ring-beam{animation:none !important}
+            #dlr-ring animateTransform{display:none}
         }
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
         #dlr-panel.frost .body{background:rgba(22,24,29,.72);border-color:rgba(255,255,255,.09);
@@ -2840,53 +2854,73 @@
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
         document.body.appendChild(panel);
-        // 下载光环：挂在面板内、.body 的**兄弟位置**，尺寸交给 CSS（见 CSS 注释）。
+        // 下载光环：面板的子元素，尺寸交给 CSS（见 CSS 注释）。
         // 放在 .body 外面而不是里面：.body 有 background + overflow + 圆角，
         // 塞进去会被裁切或被半透明背景污染。
         const NS = 'http://www.w3.org/2000/svg';
         const ring = document.createElementNS(NS, 'svg');
         ring.id = 'dlr-ring';
-        // pathLength 归一化：让 dasharray / dashoffset 成为与尺寸无关的比例值。
-        // 实测 Chromium 的 <rect> 支持此属性，改变 width/height 后
-        // getComputedStyle 的 stroke-dasharray 保持不变。
-        ring.setAttribute('pathLength', '100');
+        // viewBox 固定 0 0 100 100 + preserveAspectRatio="none"：
+        // 内部坐标被拉成面板的真实宽高，于是 rect 用百分比即可铺满，
+        // 且 stroke-width 以 viewBox 单位计（3.5/100 ≈ 面板高度的 3.5%），
+        // 面板缩到横条时光带自然变细，不需要任何 JS 介入。
+        ring.setAttribute('viewBox', '0 0 100 100');
+        ring.setAttribute('preserveAspectRatio', 'none');
+        ring.setAttribute('width', '100%');
+        ring.setAttribute('height', '100%');
+
+        // 渐变定义：透明 → 蓝 → 青 → 粉 → 透明，起点/终点透明让它读作一段「彗星」
+        // 而不是一圈彩虹。animateTransform 旋转 gradientTransform，
+        // 于是光带绕面板流动。
+        const ringDefs = document.createElementNS(NS, 'defs');
         const ringGrad = document.createElementNS(NS, 'linearGradient');
         ringGrad.setAttribute('id', 'dlrBeamGrad');
         ringGrad.setAttribute('x1', '0'); ringGrad.setAttribute('y1', '0');
         ringGrad.setAttribute('x2', '1'); ringGrad.setAttribute('y2', '1');
-        [['0', '#3d6eff'], ['0.5', '#38bdf8'], ['1', '#ec4899']].forEach(([o, c]) => {
+        [['0', 'rgba(61,110,255,0)'], ['0.22', '#3d6eff'], ['0.46', '#38bdf8'],
+         ['0.68', '#ec4899'], ['0.86', 'rgba(236,72,153,.35)'],
+         ['1', 'rgba(61,110,255,0)']].forEach(([o, c]) => {
             const s = document.createElementNS(NS, 'stop');
             s.setAttribute('offset', o); s.setAttribute('stop-color', c);
             ringGrad.appendChild(s);
         });
+        // 旋转整个渐变坐标系 = 光带绕面板流动。
+        // 用 SMIL 而不是 CSS：CSS 无法动画 gradientTransform。
+        const spin = document.createElementNS(NS, 'animateTransform');
+        spin.setAttribute('attributeName', 'gradientTransform');
+        spin.setAttribute('type', 'rotate');
+        spin.setAttribute('from', '0 0.5 0.5');
+        spin.setAttribute('to', '360 0.5 0.5');
+        spin.setAttribute('dur', '3s');
+        spin.setAttribute('repeatCount', 'indefinite');
+        ringGrad.appendChild(spin);
+        ringDefs.appendChild(ringGrad);
+        ring.appendChild(ringDefs);
+
+        // 两层描边：轨道（整圈淡色）+ 光带（旋转渐变）
         const ringTrack = document.createElementNS(NS, 'rect');
         ringTrack.setAttribute('class', 'ring-track');
         const ringBeam = document.createElementNS(NS, 'rect');
         ringBeam.setAttribute('class', 'ring-beam');
         ringBeam.setAttribute('stroke', 'url(#dlrBeamGrad)');
-        // 百分比几何：SVG 视口即面板盒子，rect 用百分比铺满。
-        // 描边在 inset 之外半个线宽，与面板圆角自然贴合。
+        // 留 1.2% 内缩，让描边落在面板圆角之外；
+        // rx/ry 用百分比，圆角随面板尺寸自适应（横条就是药丸形）。
         [ringTrack, ringBeam].forEach(el => {
-            el.setAttribute('x', '0'); el.setAttribute('y', '0');
-            el.setAttribute('width', '100%'); el.setAttribute('height', '100%');
-            el.setAttribute('rx', '3%'); el.setAttribute('ry', '3%');
-            el.setAttribute('pathLength', '100');
+            el.setAttribute('x', '1.2'); el.setAttribute('y', '1.2');
+            el.setAttribute('width', '97.6'); el.setAttribute('height', '97.6');
+            el.setAttribute('rx', '3'); el.setAttribute('ry', '3');
         });
-        // 光带占归一化周长的 28%，其余为透明缺口。数字固定，与面板尺寸无关。
-        ringBeam.setAttribute('stroke-dasharray', '28 72');
-        ring.appendChild(ringGrad);
         ring.appendChild(ringTrack);
         ring.appendChild(ringBeam);
         // 插到 .body 之前：同为面板的直接子元素，absolute 相对 #dlr-panel 定位。
         const bodyEl = panel.querySelector('.body');
         panel.insertBefore(ring, bodyEl);
+
         // 显隐：内联 opacity 优先级最高，不依赖样式表计算
         // （class 规则在本页面上曾出现「已匹配却算出 0」的坑）。
         const ringHide = () => { ring.classList.remove('on'); ring.style.opacity = '0'; };
         const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; };
         ringHide();
-        // 不再有任何同步逻辑：尺寸/位置/圆角全部由 CSS 约束自动跟随。
-        // __ringSync 保留为空实现，防止旧调用点抛错。
         const syncRing = () => {};
         window.__ringShow = ringShow;
         window.__ringHide = ringHide;
