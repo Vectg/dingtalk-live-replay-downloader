@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.0.1）
+## 功能（v3.0.2）
 
 **核心**
 
@@ -68,7 +68,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **更设置更紧凑（v2.6.0）**：数字输入框与下拉框两两并排一行，八个开关排成两列网格，整体高度比之前矮一半，不用再滚动半天找选项。
 - **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**。前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留；手动收起/展开会同步「面板状态」。**面板状态读取做了归一化**：历史版本存过的布尔、数字、字符串杂散值（`true`/`1`/`'true'`）都能正确识别，首启自动统一成规范格式，下拉框始终与面板实际状态一致（v1.9.3 修复「实际收缩却显示默认展开」的错位）。展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡。
 - **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化。进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度。收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms `cubic-bezier(0.16,1,0.3,1)` 弹簧曲线，宽高透明度完全同步），并尊重系统「减少动态效果」设置。
-- **下载光环**：下载进行时，面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动）。用 SVG 圆角矩形 + `stroke-dash` 实现，3s 慢速、不翻转；中间完全不涂色，**不会透进面板内部糊成色块**。收缩成横条时光环同样包住。 **v2.6.2 修复**：原先用 `pathLength=400` 把光带比例写死，实际周长被强行归一化，光带缩成一小段甚至不可见；现按真实周长动态计算 dasharray，动画偏移用 CSS 变量 `--ring-perim`，整周期正好走完一圈。光带跟随也补全了：进度条出现/宽度变化、折叠区展开收起等**不触发面板自身 transition** 的尺寸变化，现在也会同步光环。
+- **下载光环**：下载进行时，面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动）。用 SVG 圆角矩形 + `stroke-dash` 实现，3s 慢速、不翻转；中间完全不涂色，**不会透进面板内部糊成色块**。收缩成横条时光环同样包住。 **v2.6.2 修复**：原先用 `pathLength=400` 把光带比例写死，实际周长被强行归一化，光带缩成一小段甚至不可见；现按真实周长动态计算 dasharray，动画偏移用 CSS 变量 `--ring-perim`，整周期正好走完一圈。光带跟随也补全了：进度条出现/宽度变化、折叠区展开收起等**不触发面板自身 transition** 的尺寸变化，现在也会同步光环。 **v3.0.2 修复**：原先同步逻辑挂在面板的 `transitionstart` / `transitionend` 上，而这两个事件会从子元素冒泡上来——收起面板时子元素先结束过渡（如「收起」按钮淡出 150ms，比面板 280ms 短），逐帧循环被提前停掉，面板还在收缩、光环却停在旧尺寸，于是「框出一大块地方」「展开后不跟着变大」。现改用 `ResizeObserver` 监听面板尺寸，并补上拖动与窗口缩放（只改位置、不改尺寸）的同步。
 - **不再弹保存对话框**：点下载后直接交给浏览器存到默认下载文件夹（`saveAs:false`）。旧版弹的系统对话框在油猴里点「取消」不会回传任何回调，无法可靠判断，会造成「点取消却仍在下载」。现在无对话框、无需取消判断，完成状态栏会提示「已存入浏览器默认下载文件夹」。
 - **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼。
 
@@ -179,7 +179,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.0.1)
+## Features (v3.0.2)
 
 **Core**
 
@@ -236,7 +236,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **Compact 更多设置 (v2.6.0)**: number fields and dropdowns pair up on one row, and eight switches lay out in a two-column grid — roughly half the previous height, so options no longer need scrolling to find.
 - **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The default-state dropdown reads back the real initial state from a single source of truth, so the value shown always matches the panel's actual state (v1.9.3 fixed a mismatch where the panel was collapsed but the dropdown said "expanded").
 - **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
-- **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge. Built as an SVG rounded-rect with `stroke-dash` — 3s, slow, and it does not flip (rotating a non-square element looks jittery and fake). **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block, and it wraps the collapsed bar too. **v2.6.2 fix**: the band used to be sized with a hard-coded `pathLength=400` against the real perimeter, which squashed the dash pattern into a tiny stub or hid it entirely; the dash array is now computed from the actual perimeter and the animation offset uses a `--ring-perim` CSS variable so one cycle travels exactly one full loop.
+- **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge. Built as an SVG rounded-rect with `stroke-dash` — 3s, slow, and it does not flip (rotating a non-square element looks jittery and fake). **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block, and it wraps the collapsed bar too. **v2.6.2 fix**: the band used to be sized with a hard-coded `pathLength=400` against the real perimeter, which squashed the dash pattern into a tiny stub or hid it entirely; the dash array is now computed from the actual perimeter and the animation offset uses a `--ring-perim` CSS variable so one cycle travels exactly one full loop. **v3.0.2 fix**: the follow logic was wired to the panel's `transitionstart` / `transitionend`, and both bubble up from child elements — collapsing the panel made a child finish first (the 「收起」 button fades in 150ms versus the panel's 280ms), which stopped the per-frame loop while the panel was still shrinking, leaving the halo frozen at its old size and framing a large empty area. It now observes the panel box with `ResizeObserver`, plus explicit syncs for dragging and window resizing, which move the panel without changing its size.
 - **No save dialog**: the browser writes the file straight to its default download directory (`saveAs:false`), so there is nothing to confirm and a dismissed dialog can no longer leave the script waiting forever.
 - **Dark theme**: dark by design, with no light or system theme option.
 

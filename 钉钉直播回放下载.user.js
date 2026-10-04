@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.1
+// @version      3.0.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1431,7 +1431,7 @@
         /* 输出框（预览播放器）的展开/收起动画（v2.6.0）。
            display:none ↔ block 是瞬间切换、无法过渡，所以改用
            grid-template-rows:0fr→1fr + opacity，与面板其他折叠区同一条曲线，
-           内容与外壳同步收放，不会出现「外壳缩完了内容还在」���错位。 */
+           内容与外壳同步收放，不会出现「外壳缩完了内容还在」的错位。 */
         #dlr-preview{height:0;overflow:hidden;opacity:0;
             margin-top:0;border-top:1px solid transparent;padding-top:0;
             transition:height 280ms cubic-bezier(0.16,1,0.3,1),
@@ -2859,7 +2859,11 @@
             const perim = 2 * (cw + ch) - 8 * rx + 2 * Math.PI * rx;   // 圆角矩形周长
             if (perim > 0) {
                 const seg = Math.max(24, perim * 0.28);   //亮段约占周长 28%
-                ringBeam.setAttribute('stroke-dasharray', seg + '' + (perim - seg));
+                // dasharray 必须用**逗号**分隔两个数。原来写成 seg + '' + (perim - seg)
+                // 是字符串拼接：'533.1' + '1370.8' → '533.11370.8'，浏览器只解析出
+                // 单个数 533.113（第二个小数点处截断），于是实际是「533px 实线 + 0.8px 缝」，
+                // 绕一圈几乎全亮、根本看不出光带在流动。
+                ringBeam.setAttribute('stroke-dasharray', seg + ',' + (perim - seg));
                 ringBeam.style.strokeDashoffset = '0';
                 ringBeam.style.setProperty('--ring-perim', perim + 'px');
             }
@@ -2872,16 +2876,58 @@
         const ringHide = () => { ring.classList.remove('on'); ring.style.opacity = '0'; };
         const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; syncRing(); };
         ringHide();
-        // 收缩/展开动画期间逐帧同步（只在光环可见时跑）
+        // 面板几何变化时自动跟随光环。
+        //
+        // 原来靠 transitionstart/transitionend 启动/停止一个 rAF 逐帧循环，有三个致命缺陷：
+        //  1) transitionstart 在**子元素**上也会冒泡到面板，收起面板时子元素先结束过渡
+        //     （如 .collapse 的 opacity 150ms，比面板 280ms 短），ringAnimStop 立刻停掉循环，
+        //     面板自己的高度/宽度过渡还在跑 —— 光环从此停在旧尺寸上不动了。
+        //     表现就是「光环在外面框出一大块地方」/「展开后光环不跟着变大」。
+        //  2) 面板尺寸变化的**原因**不只有过渡：更多设置展开（子元素 height 过渡）、
+        //     预览区、状态栏换行、窗口缩放、字体加载，都不一定在面板上触发 transition，
+        //     光环就完全失联。
+        //  3) 只靠事件时机补一次 syncRing，补在动画中段（错位 20~187px）。
+        //
+        // 改为 ResizeObserver：面板盒子一变就同步，与「为什么变」无关，
+        // 收起/展开/更多设置/窗口缩放全部覆盖。ResizeObserver 不冒泡，
+        // 观察 #dlr-panel 自己即可拿到所有尺寸变化。
         let ringRaf = 0;
         const ringAnimLoop = () => {
             syncRing();
             ringRaf = requestAnimationFrame(ringAnimLoop);
             };
-        const ringAnimStart = () => { if (!ringRaf && ring.classList.contains('on')) ringAnimLoop(); };
-        const ringAnimStop = () => { if (ringRaf) { cancelAnimationFrame(ringRaf); ringRaf = 0; } };
+        // 过渡期间补 rAF，让 dasharray/圆角跟得上补间；非过渡期不常驻轮询。
+        // 起停仍看面板自身的过渡，但**忽略子元素冒泡来的事件**，
+        // 否则短过渡的子元素会提前把循环停掉（就是原来那个 bug）。
+        const panelIsTransitioning = (e) => (e.target === panel);
+        const ringAnimStart = (e) => {
+            if (!panelIsTransitioning(e)) return;
+            if (!ringRaf && ring.classList.contains('on')) ringAnimLoop();
+        };
+        const ringAnimStop = (e) => {
+            if (!panelIsTransitioning(e)) return;
+            if (ringRaf) { cancelAnimationFrame(ringRaf); ringRaf = 0; }
+            syncRing();   // 兜底：补上最后一帧，避免停在动画中段的尺寸上
+        };
         panel.addEventListener('transitionstart', ringAnimStart);
         panel.addEventListener('transitionend', ringAnimStop);
+        // 窗口缩放会改变面板的位置（fixed 定位跟着视口走），尺寸没变时
+        // ResizeObserver 不触发，同样要手动补一次。
+        window.addEventListener('resize', () => {
+            try { syncRing(); } catch (e) { }
+        });
+        // ResizeObserver 兜住所有「不触发面板自身 transition」的尺寸变化。
+        // 它在过渡进行中也会连续触发，与 rAF 循环互补；两者同时存在也无害
+        // （syncRing 幂等，只是重复写同样的一组属性）。
+        if (typeof ResizeObserver === 'function') {
+            try {
+                const ro = new ResizeObserver(() => {
+                    if (ring.classList.contains('on')) syncRing();
+                });
+                ro.observe(panel);
+                window.__ringRO = ro;
+            } catch (e) { /* 老浏览器无 ResizeObserver，靠事件路径也能工作 */ }
+        }
         window.__ringShow = ringShow;
         window.__ringHide = ringHide;
         window.__ringSync = syncRing;
@@ -3531,6 +3577,10 @@
             panel.style.top = p.top;
             panel.style.right = p.right;
             panel.style.bottom = p.bottom;
+            // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上。
+            // 漏掉这一步的表现：拖动面板时光环停在原地不动，面板滑走了，
+            // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）。
+            try { syncRing(); } catch (e) { }
         };
         const restorePos = () => {
             const raw = GM_getValue(POS_KEY, '');
@@ -3539,7 +3589,7 @@
             if (!m) return;
             applyPos(parseFloat(m[1]), parseFloat(m[2]));
         };
-        // 拖拽把手有��个：展开态是标题区(.bin)，收起态是横条(.expand)。
+        // 拖拽把手有两个：展开态是标题区(.bin)，收起态是横条(.expand)。
         // 只绑一个的话，收起后就抓不到东西了——用户反馈的正是这个。
         const handles = panel.querySelectorAll('.drag');
         // 「拖拽时自动收起更多设置与输出区」——可关。拖着面板时那些折叠区
@@ -3574,7 +3624,7 @@
         };
         // 只有落在「控件之外」的按下才开始拖拽。
         // 这条很关键：拖拽区 .bin 包住了整个表单（链接框/文件名/分辨率/截取…），
-        // 若不分��就一律 preventDefault，区域内所有输入框和下拉框都收不到焦点，
+        // 若不区分就一律 preventDefault，区域内所有输入框和下拉框都收不到焦点，
         // 整个面板变成「只能看不能改」——用户实测反馈的正是这个问题。
         // 排除「表单控件」和「收起/展开按钮」——它们各自有原生交互，不能被拖拽劫持。
         // 注意不能把 .expand 写进排除表：它本身就是收起态的拖拽把手，
