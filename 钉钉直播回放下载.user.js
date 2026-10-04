@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.4
+// @version      1.9.5
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -806,6 +806,13 @@
         #dlr-panel .foot #dlr-update:hover{color:#8b93a3}
         #dlr-panel .foot #dlr-update.found{color:#3d6eff}
         #dlr-panel .foot #dlr-update.found:hover{color:#6d9bff}
+        /* 毛玻璃下背景半透明、会透出底层画面，页脚小字提亮 + 文字阴影保证可读 */
+        #dlr-panel.frost .foot{color:#9aa1ad;text-shadow:0 1px 2px rgba(0,0,0,.8)}
+        #dlr-panel.frost .foot a{color:#aab0bb;text-shadow:0 1px 2px rgba(0,0,0,.8)}
+        #dlr-panel.frost .foot #dlr-update{color:#9aa1ad}
+        #dlr-panel.frost .foot #dlr-update:hover{color:#cdd2db}
+        #dlr-panel.frost .foot #dlr-update.found{color:#6d9bff}
+        #dlr-panel.frost .foot #dlr-update.found:hover{color:#93b8ff}
         #dlr-panel .collapse{transition:opacity 150ms ease-out}
         #dlr-panel.mini .collapse{opacity:0}
         #dlr-panel.mini .expand .ic{
