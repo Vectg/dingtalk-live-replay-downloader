@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.12
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      2.0.0
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -1143,7 +1143,18 @@
         <div class="bin">
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
-        <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div></div>
+        <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div>
+            <div class="row" style="margin-top:6px">
+                <textarea id="dlr-queue" rows="2" style="flex:1;resize:vertical;font:inherit;font-size:12px;
+                    background:#1b1e26;color:#e6e8eb;border:1px solid #2f3440;border-radius:6px;padding:6px 8px"
+                    placeholder="队列（可选）：每行一个回放，整段链接或 roomId liveUuid；按顺序依次下载"></textarea>
+            </div>
+            <div class="row" id="dlr-queue-ctl" style="display:none">
+                <button id="dlr-queue-go" title="按队列顺序依次下载">▶ 开始队列</button>
+                <button id="dlr-queue-clear" title="清空队列">✕ 清空</button>
+                <span id="dlr-queue-info" class="tip" style="flex:1"></span>
+            </div>
+        </div>
         <div class="sec">
             <div class="row">
                 <label>文件名</label>
@@ -1579,7 +1590,76 @@
         return prepCache;
     }
 
+    // ---------- 下载队列：多个回放顺序执行 ----------
+    // 设计取向：run() 一行不改，队列只做外层调度。这样「单次回放」的行为与
+    // 1.9.x 完全一致，出问题也只需怀疑队列本身。
+    // 为什么顺序执行而不是并发：并发多个回放会让总带宽争抢，
+    // 反而把每个都拖慢；用户要的是「一次挂几个」，不是「一起抢带宽」。
+    const Q = {
+        items: [],        // {id, roomId, liveUuid, opts, title}
+        running: false,   // 队列调度器是否在跑
+        current: -1,      // 当前执行中的下标
+    };
+    let queueSeq = 0;
+    // run() 内部 catch 掉所有异常并写状态栏，不向外抛——队列调度器无法靠
+    // try/catch 判定成败，只能读这个由 run() 显式回写的标志。
+    let lastRunResult = { ok: false, name: '' };
+
+    // 解析一行输入 → 一个任务。支持整段 URL、roomId/liveUuid 对、纯 liveUuid。
+    // 失败要指出是哪一行，不能只说「格式错误」。
+    function parseQueueLine(line, label) {
+        const raw = String(line == null ? '' : line).trim();
+        if (!raw) throw new Error(label + '为空');
+        // 整段 URL（或带 ? 的裸查询串）→ 交给 parseUrl 拆参数
+        if (raw.includes('?') || raw.includes('roomId=')) {
+            return parseUrl(raw);
+        }
+        // roomId 与 liveUuid 用空白/逗号/分号分隔
+        const parts = raw.split(/[\s,;]+/).filter(Boolean);
+        // 带标签的写法要同时支持 "roomId x liveUuid y" 和 "roomId=x liveUuid=y"
+        // ——从钉钉或聊天记录里复制出来时，等号形式很常见。
+        const tagged = { roomId: '', liveUuid: '' };
+        for (const p of parts) {
+            const m = /^roomid\s*=\s*(.+)$/i.exec(p);
+            if (m) { tagged.roomId = m[1]; continue; }
+            const u = /^liveuuid\s*=\s*(.+)$/i.exec(p);
+            if (u) { tagged.liveUuid = u[1]; continue; }
+            const lb = /^roomid$/i.test(p), lu = /^liveuuid$/i.test(p);
+            if (lb || lu) {
+                const idx = parts.indexOf(p);
+                if (parts[idx + 1]) {
+                    if (lb) tagged.roomId = parts[idx + 1];
+                    else tagged.liveUuid = parts[idx + 1];
+                }
+            }
+        }
+        if (tagged.roomId && tagged.liveUuid) return { roomId: tagged.roomId, liveUuid: tagged.liveUuid };
+        if (parts.length >= 2) return { roomId: parts[0], liveUuid: parts[1] };
+        // 只给了一个值：当作 liveUuid（多数人复制分享链接时先拿到的是这个）
+        if (/^[0-9a-fA-F-]{16,}$/.test(parts[0])) return { roomId: '', liveUuid: parts[0] };
+        throw new Error(label + '格式不对：需要整段回放链接，或「roomId liveUuid」一对');
+    }
+
+    // 从多行文本解析出任务列表。空行与 # 开头的行忽略。
+    function parseQueueInput(text) {
+        const lines = String(text == null ? '' : text).split(/\r?\n/);
+        const out = [];
+        const errs = [];
+        lines.forEach((ln, i) => {
+            const raw = ln.trim();
+            if (!raw || raw.startsWith('#')) return;
+            try {
+                const r = parseQueueLine(raw, '第 ' + (i + 1) + ' 行');
+                out.push({ roomId: r.roomId, liveUuid: r.liveUuid });
+            } catch (e) {
+                errs.push(e.message);
+            }
+        });
+        return { out, errs };
+    }
+
     async function run(roomId, liveUuid, opts) {
+        lastRunResult = { ok: false, name: '' };   // 每次调用先清空，防读到上次的残留
         const goBtn = $('dlr-go');
         goBtn.disabled = true;
         progressReset();
@@ -1858,6 +1938,7 @@
             setStatus('✅ 完成：' + outName + '（已存入浏览器默认下载文件夹）');
             progressDone(true);
             diagRun(true, outName + ' · ' + fmtBytes(blob.size) + ' · ' + segs.length + ' 片');
+            lastRunResult = { ok: true, name: outName };
             notify('钉钉回放下载完成', outName + ' · ' + fmtBytes(blob.size), true);
         } catch (err) {
             setStatus('❌ 失败：' + err.message, true);
@@ -2453,6 +2534,107 @@
                 m3u8Btn.textContent = oldText;
             }
         });
+
+        // ---------- 队列 UI ----------
+        const qBox = $('dlr-queue'), qRow = $('dlr-queue-ctl'),
+            qGo = $('dlr-queue-go'), qClear = $('dlr-queue-clear'), qInfo = $('dlr-queue-info');
+        const renderQueue = () => {
+            const { out, errs } = parseQueueInput(qBox.value);
+            if (!qRow) return;
+            const n = out.length;
+            qRow.style.display = (n || errs.length) ? 'flex' : 'none';
+            if (!n && !errs.length) return;
+            let msg = n ? (n + ' 个回放待下载') : '';
+            if (errs.length) msg += (msg ? '；' : '') + errs.length + ' 行无法识别';
+            if (qInfo) qInfo.textContent = msg;
+        };
+        qBox && qBox.addEventListener('input', renderQueue);
+        qBox && qBox.addEventListener('change', renderQueue);
+        qClear && qClear.addEventListener('click', () => {
+            qBox.value = '';
+            Q.items = [];
+            renderQueue();
+            setStatus('✕ 队列已清空');
+        });
+
+        // 调度器：逐个执行。单个失败不中断整队——用户排了 5 个，第 3 个签名过期
+        // 不该让 4、5 也不跑完。全部跑完再汇总。
+        async function runQueue() {
+            if (Q.running) return;
+            const { out, errs } = parseQueueInput(qBox.value);
+            if (errs.length) {
+                appendLog('⚠ 队列有 ' + errs.length + ' 行无法识别：');
+                errs.slice(0, 5).forEach((m) => appendLog('   ' + m));
+                if (!out.length) { setStatus('❌ 队列里没有可执行的回放', true); return; }
+            }
+            if (!out.length) { setStatus('⚠ 队列为空', true); return; }
+
+            Q.items = out.map((r, i) => ({ id: ++queueSeq, roomId: r.roomId, liveUuid: r.liveUuid }));
+            Q.running = true;
+            Q.current = -1;
+            qGo.disabled = true;
+            qClear.disabled = true;
+            const btn = $('dlr-go');
+            if (btn) btn.disabled = true;
+            const okList = [], failList = [];
+            appendLog('▶ 队列开始：共 ' + Q.items.length + ' 个回放，顺序执行');
+            try {
+                for (let i = 0; i < Q.items.length; i++) {
+                    if (DL.cancel) { appendLog('⏹ 队列已被中断，剩余 ' + (Q.items.length - i) + ' 个未执行'); break; }
+                    Q.current = i;
+                    const it = Q.items[i];
+                    setStatus('队列 ' + (i + 1) + '/' + Q.items.length + ' · 正在处理…');
+                    appendLog('—— 队列 [' + (i + 1) + '/' + Q.items.length + '] ' +
+                        (it.roomId ? 'roomId=' + it.roomId + ' ' : '') + 'liveUuid=' + it.liveUuid);
+                    let itemErr = '';
+                    try {
+                        await run(it.roomId, it.liveUuid, {
+                            res: resSel.value,
+                            fmt: $('dlr-fmt').value,
+                            threads: parseInt($('dlr-thread').value, 10) || 8,
+                            retry: parseInt($('dlr-retry').value, 10) || 3,
+                            name: '',          // 每个回放各自用标题，不共用一个文件名
+                            stamp: $('dlr-stamp').checked,
+                            clipFrom: null, clipTo: null,
+                        });
+                    } catch (e) {
+                        // run() 内部已兜住绝大多数错误；这里只兜它之外的意外
+                        itemErr = String((e && e.message) || e);
+                    }
+                    // run() 自己吞掉了异常，不抛——必须读它回写的标志才算数，
+                    // 否则四个全失败也会汇总成「成功 4」。
+                    if (lastRunResult.ok) {
+                        okList.push({ liveUuid: it.liveUuid, name: lastRunResult.name });
+                    } else {
+                        const reason = itemErr ||
+                            ((statusEl && statusEl.textContent) || '未知错误').replace(/^❌\s*失败：/, '');
+                        failList.push({ liveUuid: it.liveUuid, err: reason });
+                        appendLog('❌ 队列 [' + (i + 1) + '] 失败：' + reason);
+                    }
+                }
+            } finally {
+                Q.running = false;
+                Q.current = -1;
+                if (qGo) qGo.disabled = false;
+                if (qClear) qClear.disabled = false;
+                if (btn) btn.disabled = false;
+                const done = okList.length, bad = failList.length;
+                const skipped = Q.items.length - done - bad;
+                let summary = '🏁 队列结束：成功 ' + done;
+                if (bad) summary += ' · 失败 ' + bad;
+                if (skipped > 0) summary += ' · 未执行 ' + skipped;
+                appendLog(summary);
+                if (okList.length) {
+                    appendLog('   ✅ ' + okList.map((o) => o.name || o.liveUuid).slice(0, 8).join('、') +
+                        (okList.length > 8 ? ' 等 ' + okList.length + ' 个' : ''));
+                }
+                failList.slice(0, 5).forEach((f) => appendLog('   ❌ ' + f.liveUuid + ' ' + f.err));
+                setStatus(summary + (bad ? '（点状态栏看详情）' : ''), bad > 0);
+                try { window.__renderRetryRow && window.__renderRetryRow(); } catch (e) { }
+            }
+        }
+        qGo && qGo.addEventListener('click', runQueue);
+        renderQueue();
 
         $('dlr-go').addEventListener('click', () => {
             // 在用户手势内预热 AudioContext：否则下载完成时页面若已无交互，

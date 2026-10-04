@@ -863,6 +863,73 @@ section('buildM3u8（导出播放列表）');
     eq(buildM3u8({ segments: [] }).split('\n').filter((l) => l.startsWith('http')).length, 0,
         '空列表不含任何切片 URL');
 }
+
+// ---------------------------------------------------------------- 下载队列
+section('队列输入解析');
+{
+    // parseQueueLine 内部会调 parseUrl 拆整段 URL，必须一起抽进来
+    const { parseQueueLine, parseQueueInput } = loadFns(
+        ['parseQueueLine', 'parseQueueInput', 'parseUrl']);
+    const UUID = 'bce267ae-eccf-4065-b0af-54ca3d404b06';
+    const RID = 'xzRKYCIBkT';
+
+    // --- 单行：整段 URL ---
+    eq(parseQueueLine('https://n.dingtalk.com/dingding/live-room/index.html?roomId=' + RID + '&liveUuid=' + UUID,
+        '第1行'), { roomId: RID, liveUuid: UUID }, '整段 URL');
+    eq(parseQueueLine('?roomId=' + RID + '&liveUuid=' + UUID, '第1行'),
+        { roomId: RID, liveUuid: UUID }, '裸查询串');
+
+    // --- 单行：roomId + liveUuid ---
+    eq(parseQueueLine(RID + ' ' + UUID, '第1行'), { roomId: RID, liveUuid: UUID }, '空格分隔');
+    eq(parseQueueLine(RID + ',' + UUID, '第1行'), { roomId: RID, liveUuid: UUID }, '逗号分隔');
+    eq(parseQueueLine(RID + ';' + UUID, '第1行'), { roomId: RID, liveUuid: UUID }, '分号分隔');
+    eq(parseQueueLine(RID + '\t' + UUID, '第1行'), { roomId: RID, liveUuid: UUID }, 'Tab 分隔');
+    eq(parseQueueLine(RID + '   ' + UUID + '  ', '第1行'), { roomId: RID, liveUuid: UUID }, '多余空白');
+
+    // --- 单行：带标签写法 ---
+    eq(parseQueueLine('roomId ' + RID + ' liveUuid ' + UUID, '第1行'),
+        { roomId: RID, liveUuid: UUID }, 'roomId/liveUuid 带标签');
+    eq(parseQueueLine('roomid=' + RID + ' liveuuid=' + UUID, '第1行'),
+        { roomId: RID, liveUuid: UUID }, '小写标签 + 等号');
+
+    // --- 单行：只给 liveUuid ---
+    eq(parseQueueLine(UUID, '第1行'), { roomId: '', liveUuid: UUID }, '只给 liveUuid → roomId 留空');
+
+    // --- 单行：错误 ---
+    throws(() => parseQueueLine('', '第3行'), '空行报错');
+    throws(() => parseQueueLine('   ', '第3行'), '纯空白报错');
+    throws(() => parseQueueLine('随便写点什么', '第3行'), '无法识别时报错');
+    let msg = '';
+    try { parseQueueLine('', '第7行'); } catch (e) { msg = e.message; }
+    ok(msg.includes('第7行'), '报错信息带行号', msg);
+
+    // --- 多行 ---
+    const r1 = parseQueueInput([RID + ' ' + UUID, RID + ' other-uuid-2', '?roomId=' + RID + '&liveUuid=u3'].join('\n'));
+    eq(r1.out.length, 3, '三行 → 三个任务');
+    eq(r1.errs, [], '无错误');
+    eq(r1.out.map((x) => x.liveUuid), [UUID, 'other-uuid-2', 'u3'], '顺序保持');
+
+    // 空行与注释行被忽略，但不影响行号
+    const r2 = parseQueueInput(['', '# 注释', '   ', RID + ' ' + UUID].join('\n'));
+    eq(r2.out.length, 1, '空行/注释行被忽略');
+    eq(r2.errs, [], '忽略的行不算错误');
+
+    // 混合：好的留下，坏的单独报告
+    const r3 = parseQueueInput([RID + ' ' + UUID, '乱写', RID + ' u2'].join('\n'));
+    eq(r3.out.length, 2, '有效行照常解析');
+    eq(r3.errs.length, 1, '无效行单独报出');
+    ok(r3.errs[0].includes('第 2 行'), '错误信息指向具体行号', r3.errs[0]);
+
+    // CRLF 与末尾空行
+    eq(parseQueueInput(RID + ' ' + UUID + '\r\n' + RID + ' u2\r\n').out.length, 2, 'CRLF 正确切分');
+    eq(parseQueueInput('').out.length, 0, '空文本 → 零任务');
+    eq(parseQueueInput(null).out.length, 0, 'null → 零任务');
+    eq(parseQueueInput('# 只有注释').out.length, 0, '只有注释 → 零任务');
+
+    // 行数很多也不该出错（队列上限在 UI 层管）
+    const many = Array.from({ length: 200 }, (_, i) => RID + ' uuid-' + i).join('\n');
+    eq(parseQueueInput(many).out.length, 200, '200 行正常解析');
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
