@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.1.0
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      2.2.0
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -743,6 +743,289 @@
             };
     }
 
+    // ---------- 帧级精确截取（实验性） ----------
+    // 切片边界对齐只能精确到 ~30 秒（一个切片的长度）。要做到帧级，必须知道
+    // 每个视频帧的 PTS，并从目标时间点之前最近的一个关键帧（IDR）开始切——
+    // 从中间帧开始切会导致花屏，因为 P/B 帧依赖前一个 GOP。
+    // 实现路线：TS → PES → AnnexB，逐帧解析 slice header 的 first_mb_in_slice==0
+    // 且 nal_unit_type 为 5/7（IDR）或 I 帧，得出关键帧时间表。
+    // 为什么标「实验性」：依赖视频编码为 H.264 且关键帧信息可从 slice header 读出，
+    // 遇到 HEVC/AV1 或 unusual 的流会失败；失败时必须能退回切片对齐。
+
+    // 从一段 TS 数据里提取关键帧的相对时间（毫秒）。
+    // 返回按时间升序的 [{ms, byteOffset}]，byteOffset 是该关键帧 IDR 在 annexB 流里的位置。
+    function findKeyframes(tsBuf, startMs) {
+        // 先做 TS → PES payload 的重组（复用 1.9.0 的思路，但这里要保留时间戳）
+        const frames = [];
+        let pesBuf = [], pcrMs = 0;
+        let baseStart = 0;     // 当前 PES 在整条 TS 流里的起始字节偏移
+        let pesTsStart = 0;    // 该 PES 首个 TS 包在整条流里的起点（切片要用）
+        let streamLen = 0;    // 已消费的字节数
+        let videoPid = -1;    // 视频流 PID（重新封装参数集时要沿用）
+        // SPS(7)/PPS(8)：每个流的参数集。切到中途时必须注入到输出开头，
+        // 否则播放器找不到解码参数，开头几帧直接花掉。
+        const paramSets = { sps: null, pps: null };
+
+        for (let off = 0; off + 188 <= tsBuf.length; off++) {
+            if (tsBuf[off] !== 0x47) { off += 186; continue; }
+            const pusi = (tsBuf[off + 1] & 0x40) !== 0;
+            const pktStart = off;
+            const pid = ((tsBuf[off + 1] & 0x1F) << 8) | tsBuf[off + 2];
+            const afc = (tsBuf[off + 3] >> 4) & 0x3;
+            let p = off + 4;
+            // adaptation field 先读 PCR（时间源），payload 起点要跳过它
+            if (afc === 2 || afc === 3) {
+                const afStart = off + 4;
+                const afLen = tsBuf[afStart];
+                if (afLen > 0 && afStart + 1 + afLen <= tsBuf.length) {
+                    const flags = tsBuf[afStart + 1];
+                    if (flags & 0x10) {   // PCR flag
+                        const q = afStart + 2;
+                        if (q + 5 < tsBuf.length) {
+                            const base = (tsBuf[q] << 25) | (tsBuf[q + 1] << 17) |
+                                         (tsBuf[q + 2] << 9) | (tsBuf[q + 3] << 1) |
+                                         ((tsBuf[q + 4] >> 7) & 1);
+                            const ext = ((tsBuf[q + 4] & 1) << 8) | tsBuf[q + 5];
+                            pcrMs = base * 300 + ext;    // 27MHz → 毫秒
+                        }
+                    }
+                    // payload 从 adaptation field 之后开始
+                    p = afStart + 1 + afLen;
+                } else {
+                    p = afStart + 1;
+                }
+            }
+            if (afc === 0 || p >= off + 188 || p >= tsBuf.length) { off += 187; continue; }
+
+            if (videoPid < 0 && pusi) videoPid = pid;   // 第一个 PUSI 的 PID 视为视频流
+            if (pusi) {
+                if (pesBuf.length) {
+                    // 上一包 PES 结束，解析它。baseStart 是它在整条流里的起始偏移，
+                    // parsePes 把它加到关键帧位置上，得到可切片的全局字节偏移。
+                    parsePes(pesBuf, pcrMs, frames, baseStart, paramSets, pesTsStart);
+                    pesBuf = [];
+                }
+                baseStart = streamLen;   // 新 PES 从这里开始
+                pesTsStart = pktStart;   // 该 PES 首个 TS 包在整条流里的起点
+            }
+            for (let i = p; i < off + 188; i++) { pesBuf.push(tsBuf[i]); streamLen++; }
+            off += 187;
+        }
+        if (pesBuf.length) parsePes(pesBuf, pcrMs, frames, baseStart, paramSets, pesTsStart);
+        frames.sort((a, b) => a.ms - b.ms);
+        frames.paramSets = paramSets;
+        // 重新封装参数集时要沿用原视频流的 PID，否则播放器当成另一条流忽略掉
+        frames.videoPid = videoPid;
+        return frames;
+    }
+
+    // 解析一个 PES 包，找出关键帧
+    function parsePes(pes, tsMs, frames, baseStart, paramSets, pesTsStart) {
+        const b = Uint8Array.from(pes);
+        if (b.length < 14) return;
+        if (!(b[0] === 0 && b[1] === 0 && b[2] === 1)) return;
+        const streamId = b[3];
+        // 只看视频流（0xE0~0xEF）
+        if (!(streamId >= 0xE0 && streamId <= 0xEF)) return;
+        const flags2 = b[7];
+        const headerLen = b[8];
+        // PES 头布局（b 是从 PES start code 开始的完整字节序列）：
+        //   [0..2] start_code  [3] stream_id  [4..5] pkt_len  [6..7] flags
+        //   [8] header_len     [9 .. 9+header_len-1] PES header data（含 PTS/DTS）
+        //   payload 从 9 + header_len 开始
+        const ptsAt = 9;               // header_len >= 5 时，PTS 是 header data 的头 5 字节
+        const payloadAt = 9 + headerLen;
+        let pts = null;
+        if (flags2 & 0x80) {          // PTS 存在
+            if (ptsAt + 5 > b.length) return;
+            pts = (((b[ptsAt] >> 1) & 0x07) << 30) |
+                  (((b[ptsAt + 1] << 7) | (b[ptsAt + 2] >> 1)) << 15) |
+                  (((b[ptsAt + 3] << 7) | (b[ptsAt + 4] >> 1)));
+        }
+        const p = payloadAt;
+        const ms = pts !== null ? pts : tsMs;
+        // 找 IDR：start code + NAL header 的 type 5 (IDR) 或 7 (SPS 前的 SEI)
+        let isIdr = false, hasSps = false;
+        for (let i = p; i + 4 < b.length; i++) {
+            if (b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 1) {
+                const t = b[i + 3] & 0x1F;
+                if (t === 5) { isIdr = true; break; }     // IDR = 关键帧
+                if (t === 7) hasSps = true;                // SPS 通常紧邻 IDR
+            } else if (b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 0 && b[i + 3] === 1) {
+                const t = b[i + 4] & 0x1F;
+                if (t === 5) { isIdr = true; break; }
+            }
+        }
+        // 收集参数集：切到中途时必须带上，否则播放器报「non-existing PPS」开不了头
+        for (let i = p; i + 4 < b.length; i++) {
+            let nt = -1, np = i;
+            if (b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 1) { nt = b[i + 3] & 0x1F; np = i + 3; }
+            else if (b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 0 && b[i + 3] === 1) { nt = b[i + 4] & 0x1F; np = i + 4; }
+            else continue;
+            if (nt === 7) {          // SPS
+                let e = b.length;
+                for (let j = np + 1; j + 3 < b.length; j++) {
+                    if (b[j] === 0 && b[j + 1] === 0 && b[j + 2] <= 1) { e = j; break; }
+                }
+                if (!paramSets.sps) paramSets.sps = b.slice(i, e);
+                if (i > p + 64) break;
+            } else if (nt === 8) {   // PPS
+                let e = b.length;
+                for (let j = np + 1; j + 3 < b.length; j++) {
+                    if (b[j] === 0 && b[j + 1] === 0 && b[j + 2] <= 1) { e = j; break; }
+                }
+                if (!paramSets.pps) paramSets.pps = b.slice(i, e);
+                if (i > p + 64) break;
+            }
+        }
+        if (isIdr || (hasSps && b[p] === 0 && b[p + 1] === 0 && b[p + 2] === 1 &&
+                      (b[p + 3] & 0x1F) === 5)) {
+            // byteOffset 必须是相对整条流的绝对位置，否则切片时坐标系对不上
+            frames.push({
+                ms: ms,
+                byteOffset: (baseStart || 0) + p,
+                tsStart: pesTsStart || 0,     // 该 PES 首个 TS 包在流里的起点
+                size: b.length - p,
+                isIdr: isIdr,
+            });
+        }
+    }
+
+    // 把 SPS+PTS 封成合法的 TS 包序列。
+    // 为什么必须重新打包、不能直接把裸 NAL 粘到流前面：
+    // 解复用器按 188 字节对齐扫包，开头多出的裸字节会让它把后面所有包的
+    // PID/continuity 判断全搞乱，症状是「non-existing PPS」+ 开头一堆帧解码失败。
+    // 正确做法是构造一个全新的、语法合法的 PES + TS 包插到输出最前面。
+    function buildParamSetTs(sps, pps, pid, pcrMs) {
+        const payload = new Uint8Array(sps.length + pps.length);
+        payload.set(sps, 0);
+        payload.set(pps, sps.length);
+        // PES 头共 9 字节（start_code 3 + stream_id 1 + pkt_len 2 + flags 2 + header_len 1），
+        // 之后是 5 字节 PTS，payload 从第 14 字节（下标 14）开始。
+        const pes = new Uint8Array(14 + payload.length);
+        pes[0] = 0; pes[1] = 0; pes[2] = 1; pes[3] = 0xE0;   // 视频流
+        pes[4] = 0; pes[5] = 0;                             // pkt_length = 0
+        pes[6] = 0x80; pes[7] = 0x00;                        // PTS 存在，无 DTS
+        pes[8] = 0x05;                                      // header_len = 5（只有 PTS）
+        // PTS（33bit，marker bit 置 1）
+        const p = (pcrMs || 0) * 90;
+        pes[9]  = 0x21 | (((p >> 29) & 0x0E) | 0x00);
+        pes[10] = ((p >> 22) & 0xFF);
+        pes[11] = (((p >> 14) & 0xFE) | 0x01);
+        pes[12] = ((p >> 7) & 0xFE);
+        pes[13] = ((p << 1) & 0xFE) | 0x01;
+        pes.set(payload, 14);
+
+        // 按 184 字节有效载荷切成 TS 包
+        const out = [];
+        const total = pes.length;
+        const packets = Math.ceil(total / 184);
+        for (let i = 0; i < packets; i++) {
+            const pkt = new Uint8Array(188);
+            pkt[0] = 0x47;
+            pkt[1] = (i === 0 ? 0x40 : 0x00) | ((pid >> 8) & 0x1F);   // 首包带 PUSI
+            pkt[2] = pid & 0xFF;
+            pkt[3] = 0x10 | (i & 0x0F);      // 仅有效载荷，continuity 递增
+            const from = i * 184;
+            const n = Math.min(184, total - from);
+            pkt.set(pes.slice(from, from + n), 4);
+            out.push(pkt);
+        }
+        return out;
+    }
+
+
+    // 帧级截取的执行体。datas 是已下载的切片数组，segs 是对应元信息。
+    // 返回裁剪后的字节数组；找不到可靠切点时抛错，由调用方退回切片对齐。
+    function clipFrames(datas, segs, segStarts, fromMs, toMs) {
+        // 把所有切片拼成一条 TS 流，边拼边扫关键帧，记录每片在全局的字节偏移
+        const chunks = [];
+        let total = 0;
+        for (const d of datas) { if (d && d.length) { chunks.push(d); total += d.length; } }
+        if (!total) throw new Error('没有可用的切片数据');
+        const all = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { all.set(c, off); off += c.length; }
+
+        const kfs = findKeyframes(all, 0);
+        if (kfs.length < 2) throw new Error('未能在视频流中找到足够的帧级切点（' + kfs.length + ' 个关键帧）');
+
+        // 时间轴对齐是这里最容易出错的地方。
+        // 传入的 datas 往往只是「截取区间内的切片」，不是完整回放——它的第一个
+        // 关键帧并不对应回放 0 秒。必须用切片自身的起始时间做基准：
+        //   datas 里第 0 片的回放起始 = segStarts[0]（秒）
+        //   该片第一个关键帧的 PTS = kfs[0].ms
+        //   → 关键帧 k 的回放时间 = segStarts[0] + (k.ms - kfs[0].ms)/90000
+        const baseMs = kfs[0].ms;
+        const segStart0 = (segStarts && segStarts.length && typeof segStarts[0] === 'number')
+            ? segStarts[0] : 0;
+        const kfSec = kfs.map((k) => segStart0 + (k.ms - baseMs) / 90000);
+
+        // 起点：最后一个 <= fromMs 的关键帧；没有就用第一个
+        let startIdx = 0;
+        for (let i = 0; i < kfSec.length; i++) {
+            if (kfSec[i] <= fromMs / 1000) startIdx = i; else break;
+        }
+        // 终点：第一个 >= toMs 的关键帧；没有就用最后一个
+        let endIdx = kfSec.length - 1;
+        for (let i = kfSec.length - 1; i >= 0; i--) {
+            if (kfSec[i] >= toMs / 1000) endIdx = i; else break;
+        }
+        if (endIdx < startIdx) endIdx = startIdx;
+
+        // 关键：切片必须落在 TS 包边界（0x47）上。
+        // 直接按 PES 内偏移切会切出「裸流」——没有 188 字节包封装，
+        // ffprobe 能靠扫描猜出时长，但解码器找不到包边界，开头一堆帧全废。
+        const alignToTs = (from) => {
+            let i = from;
+            // 往前找最近的 0x47（最多 3 个包，因为关键帧前通常只有 SEI/AUD 包）
+            for (let k = 0; k < 4; k++) {
+                if (i <= 0) return 0;
+                if (all[i] === 0x47) return i;
+                i--;
+            }
+            return from;
+        };
+        // 用 tsStart（该关键帧所在 TS 包的起点），不是 PES 内偏移——
+        // 否则切出来的开头不是包边界，解复用器一上来就对不齐。
+        let startByte = alignToTs(kfs[startIdx].tsStart || kfs[startIdx].byteOffset);
+        let endByte = (endIdx + 1 < kfs.length)
+            ? (kfs[endIdx + 1].tsStart || kfs[endIdx + 1].byteOffset)
+            : all.length;
+        endByte = alignToTs(endByte);
+        if (endByte < startByte) endByte = all.length;
+        let body = all.slice(startByte, endByte);
+        // 长度必须是 188 的整数倍，否则末包不完整
+        const bodyLen = body.length - (body.length % 188);
+        if (bodyLen > 0 && bodyLen !== body.length) body = body.slice(0, bodyLen);
+
+        // 参数集：从中途切出来的流，开头第一个 IDR 之前没有 SPS/PPS，
+        // 播放器会报 "non-existing PPS" 然后跳过开头若干帧。
+        // 这里把 SPS/PPS 重新封装成合法 TS 包插到最前面（不能裸粘字节，会破坏对齐）。
+        const ps = kfs.paramSets || {};
+        let injected = false;
+        if (ps.sps && ps.pps) {
+            const vidPid = kfs.videoPid != null ? kfs.videoPid : 256;
+            const pkts = buildParamSetTs(ps.sps, ps.pps, vidPid, kfs[startIdx].ms);
+            const headLen = pkts.length * 188;
+            const head = new Uint8Array(headLen);
+            pkts.forEach((pk, i) => head.set(pk, i * 188));
+            const merged = new Uint8Array(headLen + body.length);
+            merged.set(head, 0);
+            merged.set(body, headLen);
+            body = merged;
+            injected = true;
+        }
+        return {
+            bytes: body,
+            actualFromSec: kfSec[startIdx],
+            actualToSec: kfSec[Math.min(endIdx + 1, kfSec.length - 1)],
+            keyframes: kfSec.length,
+            startKeyframeSec: kfSec[startIdx],
+            injectedParams: injected,
+        };
+    }
+
     // ---------- 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确） ----------
     function parseTimeArg(v, label) {
         let s = String(v == null ? '' : v);
@@ -1209,6 +1492,7 @@
                     <input type="number" id="dlr-retry" min="1" max="10" value="3">
                 </div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-smart">智能调度（贪心优先 + 并发自适应）</label></div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-frameclip">帧级精确截取（实验性）</label></div>
                 <div class="row">
                     <label>面板状态</label>
                     <select id="dlr-mini-def" style="flex:1">
@@ -1793,11 +2077,21 @@
 
             // 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确）
             const clip = clipSegments(parsed.segments, opts.clipFrom, opts.clipTo);
-            const segs = clip.segs;
+            // 帧级截取需要完整切片集：它靠「第一片对应回放 0 秒」做时间轴基准，
+            // 若这里就用裁过的切片，基准会错（第一片其实是区间中段而非开头），
+            // 而且区间外的关键帧拿不到。所以启用时先按完整列表下载，最后再精裁。
+            let frameClipWanted = false;
+            try {
+                const fv = GM_getValue('dlr_frameclip');
+                frameClipWanted = (fv === undefined || fv === null) ? false : !!fv;
+            } catch (e) { }
+            // fMP4 没有 TS 包结构，帧级解析用不了
+            const frameClipUsable = frameClipWanted && !parsed.fmp4 && opts.clipFrom !== null;
+            const segs = frameClipUsable ? parsed.segments : clip.segs;
             if (clip.range) {
                 appendLog('   ✂ 截取 ' + fmtTime(clip.range.from) + ' ~ ' + fmtTime(clip.range.to) +
-                    ' → 实际 ' + fmtTime(clip.range.first) + ' ~ ' + fmtTime(clip.range.last) +
-                    '（' + segs.length + '/' + parsed.segments.length + ' 切片）' +
+                    ' → 切片对齐到 ' + fmtTime(clip.range.first) + ' ~ ' + fmtTime(clip.range.last) +
+                    '（' + clip.segs.length + '/' + parsed.segments.length + ' 切片）' +
                     (clip.range.clamped ? '；结束时间超出总时长，已自动截到回放末尾' : ''));
             }
 
@@ -2074,32 +2368,57 @@
             try { await idbClearPartial(); } catch (e) { }
             lastFailed = [];
 
+            // 帧级精确截取（实验性）：切片对齐的粗剪之后，把起止点修到关键帧。
+            // 放在这里是因为需要全部切片已就位；失败则原样输出切片对齐的结果，
+            // 不能因为「想更精确」反而让用户拿不到文件。
+            let frameClipped = null;
+            if (frameClipUsable && clip.range) {
+                progressSet(P.mux, '帧级截取');
+                appendLog('⑤ 帧级截取（实验性）...');
+                try {
+                    const fromMs = clip.range.from * 1000;
+                    const toMs = clip.range.to * 1000;
+                    const segStarts = segs.map((sg) => sg.start || 0);
+                    const r = clipFrames(datas, segs, segStarts, fromMs, toMs);
+                    frameClipped = r;
+                    appendLog('   ✂ 帧级对齐到关键帧：' + fmtTime(r.startKeyframeSec) +
+                        ' 起，共 ' + r.keyframes + ' 个关键帧可选' +
+                        (r.injectedParams ? '（已注入 SPS/PPS）' : ''));
+                } catch (e) {
+                    appendLog('   ⚠ 帧级截取失败（' + e.message + '），已退回切片对齐结果');
+                    frameClipped = null;
+                }
+            }
+
             appendLog('⑤ 拼接 ...');
             progressSet(P.mux, '拼接');
+            // 帧级截取成功后用精修后的字节流，否则用原切片数组。
+            // 两者都是 Uint8Array[]，下游拼接逻辑完全一致。
+            const outParts = frameClipped && frameClipped.bytes ? [frameClipped.bytes] : datas;
             let blob, outName = plannedName, note = '';
             if (parsed.fmp4) {
                 try {
                     if (!parsed.initSegment) throw new Error('缺少 #EXT-X-MAP 初始化段地址');
                     const init = await getBinary(parsed.initSegment.url, null);
                     // 同样可能带 0xFFFFFFFF duration，一并修补
-                    const fixed = fixMp4Duration(mergeBuffers([init, ...datas]));
+                    const fixed = fixMp4Duration(mergeBuffers([init, ...outParts]));
                     blob = new Blob([fixed], { type: 'video/mp4' });
                     appendLog('   fMP4 直接拼接成功（init + ' + datas.length + ' 分片）');
                 } catch (e) {
                     note = '（fMP4 初始化段下载失败：' + e.message + '，已输出分片部分）';
-                    blob = new Blob(datas, { type: 'video/mp4' });
+                    blob = new Blob(outParts, { type: 'video/mp4' });
                 }
             } else if (wantMp4) {
                 try {
-                    blob = await remuxToMp4(datas);
+                    blob = await remuxToMp4(outParts);
                     appendLog('   MP4 转封装成功');
                 } catch (e) {
                     note = '（MP4 转封装失败，已回退为 TS：' + e.message + '）';
-                    blob = new Blob(datas, { type: 'video/MP2T' });
+                    blob = new Blob(outParts, { type: 'video/MP2T' });
                     outName = baseName + suffix + '.ts';
                 }
             } else {
-                blob = new Blob(datas, { type: 'video/MP2T' });
+                blob = new Blob(outParts, { type: 'video/MP2T' });
             }
             if (note) appendLog('   ' + note);
             appendLog('   生成 ' + (blob.size / 1048576).toFixed(1) + ' MB');
@@ -2259,6 +2578,9 @@
         // 让人误以为坏了），系统通知默认开（无声、可靠、点一下能回面板）
         // 智能调度：默认开启。关掉后并发固定为上面设定的线程数。
         bindChk('dlr-smart', 'dlr_smart', true);
+        // 帧级精确截取：默认关闭（标为实验性）。它需要逐帧解析视频流找关键帧，
+        // 对 CPU 和时长都有额外开销，收益只在需要精确起止点时才明显。
+        bindChk('dlr-frameclip', 'dlr_frameclip', false);
         bindChk('dlr-notify-desktop', 'dlr_notify_desktop', true);
         bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
         // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，
