@@ -5,9 +5,40 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
 ## [未发布]
 
-### 计划
-- **内嵌播放器** / **推送到下载器**(aria2)/ **视口自适应深度优化**: 均顺延到 3.0.0 之后.
+3.0.0 为收尾版本: 中英双语 README + 面板文案统一 + 全量发布.
+
+### 后续计划（3.0.0 之后）
+
+- **内嵌播放器**: 把播放器嵌进钉钉页面自带播放器位置（默认关闭）. 需先确认钉钉回放页在
+  未登录 / 可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
+- **推送到下载器**: aria2 RPC 等本地下载器集成.
+- **视口自适应深度优化**: 目前用 CSS `max-height: calc(100vh - 140px)` 应对, 未挂 resize
+  监听——窗口在加载后被改变大小时不会重算, 可继续完善.
+## [3.0.0] - 2026-10-04
+
+### 文档
+- **README 中英双语**: 中文为默认版直接展开, 英文版收在 `<details>` 折叠块里, 顶部可一键跳转.
+  两版章节结构完全对应(7 节), 45 条功能点逐条对齐, 安装链接 / 原理 / 开发 / 限制 / 版权
+  均有对应英文.
+- **面板文案与 README 统一**: 毛玻璃开关改称「开启毛玻璃效果」, 全角标点统一为英文标点,
+  多余空格收紧（涉及面板模板 20 处与运行时文案 171 处; 代码注释保持中文）.
+### 修复
+- 下载光环: 原先 `pathLength=400` 把光带比例写死, 实际周长被强行归一化, 光带缩成一小段
+  甚至不可见. 现按真实周长动态计算 dasharray, 动画偏移用 CSS 变量 `--ring-perim`,
+  整周期正好走完一圈; 显隐改内联 opacity; 进度条出现 / 宽度变化、折叠区展开收起等
+  **不触发面板自身 transition** 的尺寸变化也会同步光环.
+- 「更多设置」展开后空白: 收起态下 `scrollHeight` 恒为 0 导致高度永远写不进去, 且本页面上
+  `.open{opacity:1}` 已匹配却仍算出 0. 现高度与 opacity 均由 JS 内联写入, 并给出兜底高度.
+- 全局紧凑排版 + 视口自适应: 全部展开时面板 1178px → 约 770px, 且高度上限跟随窗口
+  (`100vh - 140px`), 实测 700 / 800 / 1200px 视口均不超出边界.
+- 拖拽不再劫持表单控件, 收起成横条后也能拖动, 拖完不会误弹开.
+### 新增
+- **解析阶段后台预下载**（见 2.7.0）: 打开页面即在后台静默拉片, 点下载只需合并保存.
+### 全量代码审计
+- 逐项静态扫描 3800+ 行, 修掉 `qGo`/`qClear`/`qInfo` 三处隐式全局变量（逗号续行漏 `const`）
+  与 `DL.running` 可能永久停在 true 的问题（`finally` 兜底复位）.
 ## [2.9.0] - 2026-10-04
+
 
 全量代码审计: 逐项静态扫描脚本 3800+ 行, 修掉扫描发现的真实缺陷, 并做浏览器回归.
 
@@ -392,7 +423,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.9.0.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.0.HEAD
+[3.0.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.9.0.v3.0.0
 [2.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0.v2.9.0
 [2.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.v2.7.0
 [2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.v2.6.3

@@ -2,17 +2,19 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.9.0-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-3.0.0-informational)](CHANGELOG.md)
 
-A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
+A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
 通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件。**无需登录钉钉账号**，在回放页点一下即可。
 
 > Only download content **you have the right to keep**. 仅用于下载你有权留存的内容。
 
+**中文（默认）** ｜ [English](#english-version)
+
 ---
 
-## 功能（v2.9.0）
+## 功能（v3.0.0）
 
 **核心**
 
@@ -98,7 +100,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
    https://gitee.com/Vectg/dingtalk-live-replay-downloader/raw/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
    ```
 
-   脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**，或用面板内的「检查更新」按钮。
+   脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**，或用面板底部的「检查更新」。
 
 3. 在 Edge / Chrome 还需到 `edge://extensions/`（或 `chrome://extensions/`）→ 篡改猴 → 详细信息，打开 **「允许用户脚本」**。此开关默认关闭时，油猴脚本一行都不会执行，右下角不会出现面板。
 
@@ -110,9 +112,9 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
 2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部）、并发、重试。
-3. 点「下载本页回放」，状态栏依次显示：取 token → 播放地址 → m3u8 → 切片 `n/N` → 拼接 → 保存；面板外右下角会有旋转光圈提示进行中。
-4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速与音量；同时弹出保存对话框。
-5. 不用时可点「收起」把面板缩成右下角小图标，需要时点图标展开；下载进行中光圈始终可见。
+3. 打开页面后会自动在后台预下载切片（日志提示完成进度），等你要下时点「下载本页回放」几乎瞬间完成；状态栏依次显示：切片 `n/N` → 拼接 → 保存。
+4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速。
+5. 不用时可点「收起」把面板缩成右下角横条，需要时点条展开；下载进行中光环始终可见。
 6. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页。
 
 也可以把 `.ts` 交给 ffmpeg 重封装：
@@ -145,20 +147,18 @@ node test/run.js
 
 测试不从副本跑：`test/extract.js` 直接从**已发布的 `钉钉直播回放下载.user.js`** 里按函数名抽取源码执行，所以测的就是用户真正装到 Tampermonkey 里的那份代码，不会出现「测试通过但发布出去是另一份实现」。抽取按花括号配平并跳过字符串/正则/注释，`test/run.js` 开头还会自检抽取结果是否完整可编译。
 
-覆盖范围：m3u8 解析（多码率选档 / AES-128 / `EXT-X-MAP` / `EXT-X-BYTERANGE` / 时间轴累加）、MP4 `fixMp4Duration`（哨兵 duration 修补，含 moof 缺失与已正常两种边界）、H.264 SPS 分辨率解析（Baseline / High 扩展路径 / `frame_cropping` / MBAFF / 上下限边界）、截取区间对齐、体积与时间格式化、版本比较、URL 解析、完成/失败通知（开关语义、提示音上行/下行、`GM_notification` 调用形态）、失败片清单推导（零长度切片也算坏片、重试时好片不被重下）、诊断日志的签名抹除、自定义分辨率的输入归一化与档位匹配、m3u8 导出的规范合规性（标签顺序、TARGETDURATION 取整、AES/MAP/BYTERANGE 位置）。、队列输入解析（多种行格式、注释行、错误行号）。、贪心排序（含未知体积与稳定性）、并发控制器（爬升/降级/边界夹紧）。
-
 GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、`test/run.js` 单元测试，以及 `test/version_guard.sh` —— 最后一项会在「改了 `.user.js` 却没 bump `@version`」时让 CI 失败（这个坑在 1.6.8 踩过一次：修复发布了，但版本号没涨，Tampermonkey 用户根本收不到更新）。
 
 ---
 
 ## 已知限制
 
-- 截取默认按切片边界对齐（约 30 秒粒度）；开启「帧级精确截取（实验性）」后对齐到关键帧，但需要完整切片集才能建立时间轴，且仅支持 TS（fMP4 会自动退回切片对齐）。
-- 预览的**倍速只作用于面板内播放**（音量用播放器自带的控制条，本脚本不再额外加滑块），不改变已保存的文件——改写音频音量或播放速度需重新编码，浏览器内无法可靠完成；需要这类处理请把 `.ts` 交给 ffmpeg。
+- 截取默认按切片边界对齐（约 30 秒粒度）；开启「帧级精确截取」后对齐到关键帧，但需要完整切片集才能建立时间轴，且仅支持 TS（fMP4 会自动退回切片对齐）。
+- 预览的**倍速只作用于面板内播放**，不改变已保存的文件——改写音频音量或播放速度需重新编码，浏览器内无法可靠完成；需要这类处理请把 `.ts` 交给 ffmpeg。
 - `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
 - 回放签名约 10 天有效，过期后重新点一次下载即可。
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
-- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住毛玻璃、收缩状态、各项设置与更新源选择）、`GM_notification`（完成/失败通知）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
+- 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住各项设置）、`GM_notification`（完成/失败通知）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
 
 ---
 
@@ -168,6 +168,181 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 
 ---
 
-## License
+## English version
+
+<details>
+<summary><b>Click to expand the English version</b> — click to collapse</summary>
+
+A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
+
+> Only download content **you have the right to keep**.
+
+---
+
+## Features (v3.0.0)
+
+**Core**
+
+- **No login required**: `csrf` → `getOpenLiveInfoV2` to obtain the signed playback URL, fully anonymous.
+- **Output MP4 (default) / TS**: `.mp4` is remuxed in-browser by `mux.js`; `.ts` is a raw concatenation and has the widest compatibility.
+- **Resolution picker**: multi-variant playlists are detected automatically (default `Auto` = highest bandwidth = original resolution). After prefetch the dropdown is filled in with every variant and its bitrate, and switching re-prefetches; the choice persists. **Single-variant TS streams get their original resolution analysed automatically** — a Range request pulls the first 64KB, the TS is demuxed and the H.264 SPS is parsed (Baseline / Main / High plus cropping parameters), so the first dropdown entry reads `Auto (original 1280×720)`. The history log also carries `H.264 Main @3.1`-style profile/level detail (verified against a real replay).
+- **MP4 duration and progress bar fixed**: `mux.js` writes `0xFFFFFFFF` (the "unknown" sentinel) into `moov/mvhd/mdhd`, which makes players report a dozen-plus hours, refuse to seek, and freeze on one frame. The script walks `moof` boxes, recomputes the real duration from `tfdt + Σtrun`, and writes it back — a 30-minute replay then shows as 30 minutes and the file size is unchanged.
+- **Failure diagnostics**: when a segment fails, the status line prints a one-line summary (index + cause + what to try), grouped by error type (401/403 signature expired, 404 replay already purged, anything else: lower concurrency or update the script).
+- **Output history**: the status line shows only the newest entry by default; **click it** to expand the full history (up to 300 entries, scrollable) and click again to collapse. Full sentences wrap; nothing is clipped mid-character.
+- **Progress animation**: progress bar plus status line, both fully rendered (wrapped, never truncated), showing the current stage and `n/N` live.
+
+**Performance and prefetch**
+
+- **Size estimate (v1.9.7)**: before downloading, a `Range: bytes=0-0` request fetches a single byte of the first segment to read `Content-Range`, giving the segment size; `segment size × count` yields the total without downloading anything extra. The parse stage logs `预计体积: 约 340 MB（单片 5.8 MB × 60 片）`; during download the progress bar adds `downloaded/estimated`. A failed probe is skipped silently and never blocks the download.
+- **Integrity check (v1.9.7)**: after every segment is down, each one is validated — count complete, non-empty, and TS sync bytes aligned on the 188-byte period (the alignment point is searched within the first 188 bytes so legitimate segments carrying an ID3 or padding prefix still pass, while HTML error pages and truncated data are caught). On success the log reads `✅ 完整性校验通过：60/60 片 · 341.2 MB`; on failure **only the bad segments are nulled while the good ones stay as resume cache**, the offending indexes are listed, and pressing download refetches only those — never the whole replay again.
+- **Frame-accurate clipping (v2.5.0 entry point; experimental, off by default)**: enabled in 更多设置. Slice-boundary alignment is only ever exact to a slice length (usually 30s); with this on, a second pass refines it by walking the video stream frame by frame, collecting every keyframe and snapping the start and end to the nearest IDR. **Because frame-level refinement needs the complete segment set to establish a timeline, enabling it downloads the full replay first and then trims** (more traffic and time, in exchange for precision slice alignment cannot reach). Streams cut mid-way are re-wrapped with fresh SPS/PPS inserted at the head of the output — otherwise players find no decoding parameters and the first frames fail to decode. fMP4 replays are unsupported (no TS packet structure); when too few keyframes are found it falls back to slice alignment, so chasing precision never costs you the file. **Since v2.5.0 the clip area carries a visible pointer**: anyone who does not know the feature can click the blue "open frame-accurate clipping here" link in the tip line, which expands 更多设置 and flashes the switch twice. The switch title states plainly that it is off by default and what turning it on costs.
+- **Smart scheduling (v2.1.0)**: on by default in 更多设置. Two things at once — **greedy segment ordering**: a sample of segments from the head and tail is probed for real size (1-byte Range, nothing downloaded) and the largest ones go first, so the longest pole starts early and total completion time shrinks; **adaptive concurrency**: starts from your thread count, climbs toward 16 while segments keep succeeding, and the moment one fails it drops concurrency and backs off, then climbs again once things recover. When sizes cannot be probed (probe failed, or BYTERANGE segments) it falls back to the original order with no loss of function. The log reports the sample and the final concurrency. Turn it off and concurrency stays pinned at your setting, behaving exactly as in 1.9.x.
+- **Background pre-download after parsing (v2.7.0)**: as soon as the segment list is parsed on opening a replay page, segments are fetched silently in the background (weak concurrency of 2 so bandwidth is not hogged) and the log reports `✓ 后台预下载完成 12 片 · 441 KB，现在点下载只需合并保存`. By the time you decide to download, pressing the button finishes almost instantly. Can be turned off in 更多设置 (on by default); switched off, behaviour is identical to 2.6.x. **The pre-download lives in memory only and is never written to disk** — a page reload discards it, so no undeletable ghost cache is ever created. 「中断」 and 「删除已下载」 clear it too.
+- **Prefetch playback info**: the signed playback URL and segment index are fetched on page load so downloading can start without waiting.
+- **Automatic thread count**: network-IO bound, so the default is CPU logical cores × 2 (clamped to 4–16); once you set it manually, your value wins.
+
+**Download control**
+
+- **Pause / resume**: freeze progress and continue later; already-downloaded segments are kept.
+- **Interrupt**: stop this run; downloaded segments stay as resume cache and the next run continues from there.
+- **Delete downloaded**: wipe every cached segment of this replay.
+- **Failed-segment-only retry (v1.9.10)**: after a failure or an integrity check, a "retry failed segments only" button appears showing exactly how many failed and which (e.g. "2 failed last time (#3 #6)"). Clicking it refetches **only** those — everything already downloaded is reused via the IndexedDB resume cache (since v1.9.6), which survives reloads and closed tabs. Changing resolution or pressing 「删除已下载」 hides the button so stale numbers never mislead.
+- **Live speed and ETA**: EMA speed plus estimated time remaining, shown next to the progress bar.
+- **Completion / failure notifications (v1.9.9)**: optionally raise a system notification when a run ends — success or failure — carrying the filename and size (on failure, the cause and a suggested next step; clicking the notification returns to the panel). The sound is synthesised live with WebAudio (two rising tones on success, three falling on failure), no bundled audio file. Both switches live in 更多设置: notifications **on** by default, sound **off** by default — browser autoplay policies frequently block sound on pages without interaction, so defaulting it on makes it look broken. The AudioContext is warmed up when you press download to slip past that policy.
+
+**After the download**
+
+- **Export an .m3u8 playlist (v1.9.12)**: 「📄 导出 m3u8」 at the panel bottom writes the segment list of the currently selected resolution as a standard playlist, ready for VLC / ffmpeg / any other downloader, or for archiving. Output is strict HLS: `TARGETDURATION` rounded up to the longest segment, `EXTINF` and segment URLs strictly alternating, `EXT-X-MAP` before the first `EXTINF`, `BYTERANGE` before its own segment URL, a `KEY` declaration (with IV) when AES-128 is in use, and `EXT-X-ENDLIST` at the end. Deliberately no BOM: some parsers would read the first line as a tag name. Verified with ffmpeg — duration and segment count match exactly.
+- **One-click diagnostic log (v1.9.11)**: 「📋 导出诊断日志」 writes a `.txt` containing the script version, browser UA, hardware concurrency and the auto-detected thread count, parse results (segment count / duration / encryption / fMP4 / variant list), cache and pending-retry indexes, every setting, the outcome of each run, and **uncaught page exceptions and promise rejections**. Signatures inside playback URLs (`auth_key` / `token` / `sign` / `signature`, in any case variant) are stripped automatically — diagnostic text tends to get pasted straight into public issues, and leaving them in would leak one-time credentials.
+- **Custom resolution (v1.9.11)**: besides the variants a playlist declares, the dropdown lists common tiers **not exceeding the original resolution** (4K / 1440p / 1080p / 900p / 720p / 540p / 480p / 360p / 270p); a trailing `自定义…` entry accepts `宽x高`, including the common hand-typed shapes `1920X1080`, `1920×1920`, full-width digits and a Chinese colon. Whatever you type is matched to the closest real variant — **and when no variant matches exactly it says which one it actually used**, so you are never left thinking you downloaded a resolution you did not ask for. With no usable variant it says so plainly and returns to `Auto`.
+- **Download queue (v2.0.0)**: a multi-line queue under the link box (one replay per line) downloads them one after another via 「▶ 开始队列」. Line formats are lenient — a full URL, a bare query string, `roomId liveUuid`, or `roomId=liveUuid liveUuid=…` (the form you get copying from chat) all work; blank lines and `#` comments are ignored, and an unrecognised line is reported on its own with its line number. **One failing replay does not abort the queue** — queue five, let the third one's signature expire, and the remaining two still finish before a "succeeded N · failed M" summary. Sequential rather than concurrent on purpose: running several replays at once only makes them fight for bandwidth and all slow down; what users want is to queue a few, not to have them compete.
+- **Choose the update source (v1.9.11)**: switch between **Gitee (default) / GitHub / Auto** in 更多设置. Gitee is the default because `raw.githubusercontent.com` is unreliable from mainland China while the Gitee mirror usually is not. Switching re-runs the check immediately and the "new version found" link follows the chosen source.
+- **Link parsing fix (v1.9.8)**: pasting a bare query string without a domain (`?roomId=…&liveUuid=…`) no longer fails with "link is missing roomId/liveUuid" — the old fallback prepended another `?`, which glued an extra question mark onto the first parameter name so nothing resolved.
+- **Custom filename**: type it in the panel; **left blank it uses the replay title** (the placeholder shows that title). An accidental `.mp4` / `.ts` suffix is stripped automatically. With "append timestamp" enabled the placeholder gains `_timestamp` and refreshes every second.
+
+**Clipping and preview**
+
+- **Clip range (unit auto-detected since v2.3.0)**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired as before. A two-part value (`1:30`) is never rewritten on a guess — it is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` and out-of-range input reports a usable form. An end past the total duration is clamped to the end with a note.
+- **Built-in preview**: after an MP4 finishes downloading, a player appears in the panel with **speed** (0.5×–2×) control. Playback speed affects the preview only, never the saved file — see Known limitations.
+- **Filename timestamp**: append `_YYYYMMDD-HHmmss`.
+
+**Panel appearance**
+
+- **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur and a light border, letting the player show through; the state persists across reloads. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content (v2.9.5 fix).
+- **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it.
+- **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
+- **Auto-collapse settings while dragging (v2.6.0)**: collapsible sections and the preview area fold away while you drag and are restored when you release; a toggle in 更多设置 (on by default) turns this off.
+- **Viewport-aware panel (v2.6.1)**: the panel's height is capped to the available window height (`100vh - 140px`) with the remainder scrolling inside. **Fully expanded, the panel never exceeds the screen** — measured at 678px in a 700px-tall window, which comfortably covers ordinary laptop viewports.
+- **Compact 更多设置 (v2.6.0)**: number fields and dropdowns pair up on one row, and eight switches lay out in a two-column grid — roughly half the previous height, so options no longer need scrolling to find.
+- **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The default-state dropdown reads back the real initial state from a single source of truth, so the value shown always matches the panel's actual state (v1.9.3 fixed a mismatch where the panel was collapsed but the dropdown said "expanded").
+- **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
+- **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge. Built as an SVG rounded-rect with `stroke-dash` — 3s, slow, and it does not flip (rotating a non-square element looks jittery and fake). **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block, and it wraps the collapsed bar too. **v2.6.2 fix**: the band used to be sized with a hard-coded `pathLength=400` against the real perimeter, which squashed the dash pattern into a tiny stub or hid it entirely; the dash array is now computed from the actual perimeter and the animation offset uses a `--ring-perim` CSS variable so one cycle travels exactly one full loop.
+- **No save dialog**: the browser writes the file straight to its default download directory (`saveAs:false`), so there is nothing to confirm and a dismissed dialog can no longer leave the script waiting forever.
+- **Dark theme**: dark by design, with no light or system theme option.
+
+**Protocol compatibility**
+
+- **Multi-bitrate**: `#EXT-X-STREAM-INF` variants are detected and the highest bandwidth is chosen by default; a manual pick overrides it.
+- **AES-128**: on `#EXT-X-KEY` the key is fetched via Web Crypto and each segment is decrypted on the fly.
+- **fMP4 / BYTERANGE**: supports `#EXT-X-MAP` initialisation segments and `#EXT-X-BYTERANGE` byte ranges.
+- **Concurrency** (1–16, auto-detected by default as CPU logical cores × 2, your setting wins once set) and **retries** (1–10, default 3, exponential backoff).
+
+**Versions and updates**
+
+- The panel footer shows the version beside a small grey "check for updates" label (no longer a button since v1.9.4). **The automatic check is on by default** (toggle in 更多设置): on page load it compares against the latest release in the background and, when a newer one exists, that label becomes a clickable blue "new version x.y.z ↑". **It never navigates on its own — click to open the update page.** With the automatic check off, pressing it checks manually and you still click once more to reach the download. "Already latest" and check failures appear briefly and then revert. **If GitHub is unreachable it falls back to the Gitee mirror.**
+- Every release is tagged and recorded in [CHANGELOG.md](CHANGELOG.md).
+- CI runs `node --check`, the unit tests, and a **version-bump guard** that fails the build if `.user.js` changed without `@version` increasing — the exact trap 1.6.8 fell into, where a fix shipped but users never received it.
+
+
+---
+
+## Installation
+
+1. Install [Tampermonkey](https://www.tampermonkey.net/).
+2. Open either Raw URL below to trigger the install page (GitHub or Gitee):
+
+   ```
+   https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+   ```
+
+   If GitHub is slow from mainland China, use the Gitee mirror:
+
+   ```
+   https://gitee.com/Vectg/dingtalk-live-replay-downloader/raw/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js
+   ```
+
+   The script ships `@updateURL` / `@downloadURL`, so **once installed it can upgrade itself through Tampermonkey's "check for updates"**, or via the panel's own update check.
+
+3. On Edge / Chrome you must also open `edge://extensions/` (or `chrome://extensions/`) → Tampermonkey → Details and turn on **"Allow user scripts"**. While this is off (the default) the script does not execute a single line and no panel appears.
+
+> If the panel is missing: confirm the toggle is on → the script is enabled in Tampermonkey → hard-reload the replay page with `Ctrl+F5` → check the F12 console for errors.
+
+---
+
+## Usage
+
+1. Open the replay page (`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`); the panel appears at the bottom-right and reads the link automatically.
+2. Optionally set **filename** (blank uses the replay title), **output format**, **clip range** (units auto-detected, blank means everything), concurrency and retries.
+3. Once the page has parsed, segments are pre-downloaded in the background (the log reports progress), so pressing "下载本页回放" finishes almost instantly; the status line then shows segments `n/N` → merge → save.
+4. After an MP4 finishes, a preview player appears in the panel with **speed** control.
+5. When you do not need it, press 「收起」 to shrink the panel to a slim bar at the bottom-right; click it to expand. The halo stays visible while downloading.
+6. You can also paste any replay link into the box and press download without staying on that page.
+
+To remux a `.ts` with ffmpeg:
+
+```bash
+ffmpeg -i in.ts -c copy -bsf:a aac_adtstoasc out.mp4
+```
+
+On Windows, non-ASCII filenames and quotes are easy to get wrong; prefer Python `subprocess.run([...])` or rename to ASCII first.
+
+---
+
+## How it works
+
+- `GET https://lv.dingtalk.com/csrf` — **must not carry an Origin header**, or it returns 403 `Invalid CORS request`; this yields a token plus the `XSRF-TOKEN` cookie.
+- `POST https://lv.dingtalk.com/getOpenLiveInfoV2` — the body is a **single object** `{roomId, liveUuid}`, and it must carry both the `XSRF-TOKEN` cookie and the `X-XSRF-TOKEN` header (same token) → returns `openLiveDetailModel.playbackUrl`, a signed m3u8 valid for about 10 days.
+- The m3u8 is parsed into individually signed segment URLs, downloaded concurrently and concatenated in order.
+- `getOpenLiveInfo` (V1) returns an **empty** `playbackUrl` for anonymous callers, so V2 is mandatory. `sliceCount` / `sliceDuration` are sprite-sheet parameters, **not** segment counts — trust the actual m3u8 entries.
+- **MP4 duration repair**: `mux.js` targets MSE streaming and leaves `mvhd/tkhd/mdhd` duration as `0xFFFFFFFF`. The script walks `moof/traf`, recomputes each track's real end time from `tfdt + Σtrun.sample_duration`, converts by timescale and writes it back. Media data and file size are unchanged.
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/Vectg/dingtalk-live-replay-downloader.git
+cd dingtalk-live-replay-downloader
+node test/run.js
+```
+
+Tests do not run against a copy: `test/extract.js` slices functions straight out of the **published `钉钉直播回放下载.user.js`** and executes them, so what is tested is exactly what users install. Extraction balances braces while skipping strings, regexes and comments, and `test/run.js` self-checks that the extracted source compiles.
+
+GitHub Actions runs three jobs on every push / PR: `node --check`, the unit tests, and `test/version_guard.sh` — the last one fails the build if `.user.js` changed without `@version` increasing, the exact trap 1.6.8 fell into where a fix shipped but users never received it.
+
+---
+
+## Known limitations
+
+- Clipping is aligned to slice boundaries by default (about 30s granularity). With 「帧级精确截取」 enabled it snaps to keyframes, but that needs the complete segment set to build a timeline, and it works for TS only (fMP4 falls back to slice alignment).
+- Preview **speed affects the in-panel playback only**, never the saved file — rewriting audio volume or playback speed requires re-encoding, which cannot be done reliably in the browser. Hand the `.ts` to ffmpeg for that.
+- `.ts` cannot be previewed in a browser `<video>` (Chromium does not decode MPEG-TS); use VLC / mpv / PotPlayer, or pick MP4 instead.
+- Replay signatures last about 10 days; press download once more after they expire.
+- `@connect *` is granted because HLS CDN hosts vary per replay (`dtliving-sz.dingtalk.com`, `dtlive-sz.dingtalk.com`, …). Replace it with explicit hosts if you prefer.
+- Permissions are limited to `GM_xmlhttpRequest` (cross-origin requests), `GM_download` (saving files), `GM_addStyle` (panel styles), `GM_getValue` / `GM_setValue` (remembering settings) and `GM_notification` (completion / failure notices). The script only reads the current page URL's query parameters; it neither reads nor uploads page content.
+
+---
+
+## Copyright
+
+The script retrieves replays through public interfaces, **bypassing CDN signatures**. DingTalk's Terms of Service may treat "circumventing access controls" as a breach, and replay content may itself be copyrighted. Download only content **you have the right to keep**; do not redistribute or use it commercially.
+
+---
+
+</details>
+
+---
+
+## License / 许可
 
 [MIT](LICENSE)
