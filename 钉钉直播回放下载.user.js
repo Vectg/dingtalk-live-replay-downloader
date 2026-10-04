@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.6
+// @version      1.9.7
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -168,6 +168,13 @@
             if (na < nb) return -1;
         }
         return 0;
+    }
+    // 字节 → 人类可读（体积预估与完整性校验日志用）
+    function fmtBytes(b) {
+        if (!(b > 0)) return '0 B';
+        if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+        if (b >= 1024) return Math.round(b / 1024) + ' KB';
+        return b + ' B';
     }
     // 给一个非空兜底名（真正要用默认值时调用）
     function safeName(name, fallback) {
@@ -1218,6 +1225,19 @@
         return null;
     }
 
+    // 体积预估：Range 只拉首片 1 字节读 Content-Range 得单片总大小，不下载整片
+    async function probeSegBytes(url) {
+        try {
+            const r = await gmx({ url, binary: true, headers: { Range: 'bytes=0-0' } });
+            const hdr = String(r.responseHeaders || '');
+            let m = hdr.match(/content-range:\s*bytes\s+\d+-\d+\/(\d+)/i);
+            if (m) return parseInt(m[1], 10);
+            m = hdr.match(/content-length:\s*(\d+)/i);
+            if (m) return parseInt(m[1], 10);
+        } catch (e) { /* 预估失败不影响下载 */ }
+        return null;
+    }
+
     // ---------- 预解析：csrf → 播放地址 → m3u8，可被 run() 复用 ----------
     // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
     let prepCache = null;      // {key, at, token, model, parsed}
@@ -1294,6 +1314,18 @@
             appendLog('   切片数: ' + segs.length +
                 (parsed.encrypted ? '   AES-128 加密' : '') +
                 (parsed.fmp4 ? '   fMP4' : '   TS'));
+            // 体积预估：Range 拉首片 1 字节读 Content-Range → 单片 × 片数
+            let estTotal = null;
+            if (segs.length) {
+                try {
+                    const one = await probeSegBytes(segs[0].url);
+                    if (one > 0) {
+                        estTotal = one * segs.length;
+                        appendLog('   预计体积: 约 ' + fmtBytes(estTotal) +
+                            '（单片 ' + fmtBytes(one) + ' × ' + segs.length + ' 片）');
+                    }
+                } catch (e) { /* 预估失败静默 */ }
+            }
             progressSet(P.dlStart, '下载');
             setPhase('download');   // 进入下载阶段：收缩条转绿
 
@@ -1302,11 +1334,11 @@
             // 断点续传：命中同 key 的 partial 缓存则直接复用已下载切片
             const dlKey = roomId + '|' + liveUuid + '|' + (opts.res || '') +
                 '|' + (clip.range ? clip.range.from + '-' + clip.range.to : 'full');
-            let resumed = 0;
+            let resumed = 0, resumedBytes = 0;
             if (partial && partial.key === dlKey &&
                 partial.datas && partial.datas.length === segs.length) {
                 for (let i = 0; i < segs.length; i++) {
-                    if (partial.datas[i]) { datas[i] = partial.datas[i]; resumed++; }
+                    if (partial.datas[i]) { datas[i] = partial.datas[i]; resumed++; resumedBytes += datas[i].length; }
                 }
                 if (resumed) appendLog('   ♻ 命中断点缓存，已恢复 ' + resumed + '/' + segs.length + ' 个切片');
             }
@@ -1317,7 +1349,7 @@
                     if (saved && saved.key === dlKey &&
                         saved.datas && saved.datas.length === segs.length) {
                         for (let i = 0; i < segs.length; i++) {
-                            if (saved.datas[i]) { datas[i] = saved.datas[i]; resumed++; }
+                            if (saved.datas[i]) { datas[i] = saved.datas[i]; resumed++; resumedBytes += datas[i].length; }
                         }
                         if (resumed) {
                             partial = { key: dlKey, datas: datas.slice() };
@@ -1333,6 +1365,7 @@
             const span = P.dlEnd - P.dlStart;
             // 速度（EMA 平滑）+ 预计剩余时间
             let speedBps = 0, lastTickT = Date.now(), lastTickBytes = 0, gotBytes = 0;
+            let haveBytes = resumedBytes;   // 已持有字节（含断点恢复），进度条体积显示用
             const fmtSpeed = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s'
                 : (b >= 1024 ? Math.round(b / 1024) + ' KB/s' : Math.round(b) + ' B/s');
             const updProgress = () => {
@@ -1346,6 +1379,7 @@
                 const avg = done ? gotBytes / (done - resumed) || 0 : 0;
                 const eta = (speedBps > 0 && avg > 0) ? Math.round((avg * remain) / speedBps) : null;
                 let label = '切片 ' + done + '/' + segs.length;
+                if (estTotal) label += ' · ' + fmtBytes(haveBytes) + '/' + fmtBytes(estTotal);
                 if (speedBps > 0) label += ' · ' + fmtSpeed(speedBps);
                 if (eta !== null && eta >= 0 && remain > 0) label += ' · 剩 ' + fmtTime(eta);
                 if (DL.pause) label += ' · 已暂停';
@@ -1373,6 +1407,7 @@
                             const got = await downloadSegment(seg, keyCache, 0);
                             datas[i] = got.bytes;
                             gotBytes += got.bytes.length;
+                            haveBytes += got.bytes.length;
                             done++;
                             updProgress();
                             if (done % 10 === 0 || done === segs.length) appendLog('   ' + done + '/' + segs.length);
@@ -1421,6 +1456,44 @@
                 appendLog('❌ ' + failures.length + '/' + segs.length + ' 切片失败：#' + first.index + ' ' + first.reason);
                 throw new Error(failures.length + '/' + segs.length + ' 切片失败（#' + first.index + ' ' + first.reason + '）。建议：' + advice);
             }
+            // 完整性校验：数量齐全、非空、TS 同步字节对齐（fMP4 不适用）。
+            // 不硬性要求 d[0]===0x47——真实切片可能带 ID3/填充前缀（probeResolution
+            // 就是扫描找对齐的），改为在首 188 字节内找对齐点并验证 188 周期性：
+            // HTML 错误页/截断数据找不到周期性 → 判异常；带前缀的合法切片能通过。
+            const looksLikeTs = (d) => {
+                if (d.length < 188) return true;   // 过短无法判型，只保证非空
+                const maxOff = Math.min(188, d.length);
+                for (let off = 0; off < maxOff; off++) {
+                    if (d[off] !== 0x47) continue;
+                    let k = 1, ok = true;
+                    while (off + k * 188 < d.length && k < 8) {
+                        if (d[off + k * 188] !== 0x47) { ok = false; break; }
+                        k++;
+                    }
+                    if (ok) return true;
+                }
+                return false;
+            };
+            const badIdx = [];
+            for (let i = 0; i < segs.length; i++) {
+                const d = datas[i];
+                if (!d || !d.length) { badIdx.push(i + 1); datas[i] = null; continue; }
+                if (!parsed.fmp4 && !looksLikeTs(d)) { badIdx.push(i + 1); datas[i] = null; }
+            }
+            if (badIdx.length) {
+                // 问题切片置空：好片保留为断点缓存（内存+IDB），重下只补这些
+                partial = { key: dlKey, datas: datas.slice() };
+                try { await idbPutPartial(dlKey, datas); } catch (e) { }
+                const list = badIdx.map((i) => '#' + i).join(' ');
+                appendLog('❌ 完整性校验失败：' + list + ' 内容异常（空数据或非 TS 结构）');
+                throw new Error('完整性校验失败：' + list + ' 内容异常（空数据或非 TS 结构），' +
+                    '其余 ' + (segs.length - badIdx.length) + '/' + segs.length +
+                    ' 片已保留为断点缓存，点「下载本页回放」只补这些切片。');
+            }
+            const okBytes = datas.reduce((s, d) => s + (d ? d.length : 0), 0);
+            appendLog('   ✅ 完整性校验通过：' + segs.length + '/' + segs.length +
+                ' 片 · ' + fmtBytes(okBytes) +
+                (parsed.fmp4 ? ' · fMP4' : ' · TS 同步字节正常'));
             partial = null;   // 全部下载成功，断点缓存失效
             try { await idbClearPartial(); } catch (e) { }
 
