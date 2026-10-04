@@ -156,6 +156,7 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 - 截取默认按切片边界对齐（约 30 秒粒度）；开启「帧级精确截取」后对齐到关键帧，但需要完整切片集才能建立时间轴，且仅支持 TS（fMP4 会自动退回切片对齐）。
 - 预览的**倍速只作用于面板内播放**，不改变已保存的文件——改写音频音量或播放速度需重新编码，浏览器内无法可靠完成；需要这类处理请把 `.ts` 交给 ffmpeg。
 - `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
+- **下载光环的动画在高分辨率屏幕上可能不够顺滑**（4K / 高 DPI 环境反馈）。光环本身的位置与尺寸已正确贴合面板；卡顿只影响动画流畅度，不影响下载。已排除「dash 动画计算量过大」这一常见猜测——实测关闭动画与开启动画的帧耗时一致。待查方向与验证方法见 CHANGELOG 的「未发布」小节。
 - 回放签名约 10 天有效，过期后重新点一次下载即可。
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
 - 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住各项设置）、`GM_notification`（完成/失败通知）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容。
@@ -327,6 +328,7 @@ GitHub Actions runs three jobs on every push / PR: `node --check`, the unit test
 - Clipping is aligned to slice boundaries by default (about 30s granularity). With 「帧级精确截取」 enabled it snaps to keyframes, but that needs the complete segment set to build a timeline, and it works for TS only (fMP4 falls back to slice alignment).
 - Preview **speed affects the in-panel playback only**, never the saved file — rewriting audio volume or playback speed requires re-encoding, which cannot be done reliably in the browser. Hand the `.ts` to ffmpeg for that.
 - `.ts` cannot be previewed in a browser `<video>` (Chromium does not decode MPEG-TS); use VLC / mpv / PotPlayer, or pick MP4 instead.
+- **The download halo's animation can look choppy on high-resolution displays** (reported on 4K / high-DPI). The halo's position and size already hug the panel correctly; only the motion is affected, never the download. The usual suspect — an expensive `stroke-dashoffset` animation — was measured and ruled out: frames cost the same with the animation on or off. Remaining directions and how to verify them are in the CHANGELOG's "Unreleased" section.
 - Replay signatures last about 10 days; press download once more after they expire.
 - `@connect *` is granted because HLS CDN hosts vary per replay (`dtliving-sz.dingtalk.com`, `dtlive-sz.dingtalk.com`, …). Replace it with explicit hosts if you prefer.
 - Permissions are limited to `GM_xmlhttpRequest` (cross-origin requests), `GM_download` (saving files), `GM_addStyle` (panel styles), `GM_getValue` / `GM_setValue` (remembering settings) and `GM_notification` (completion / failure notices). The script only reads the current page URL's query parameters; it neither reads nor uploads page content.
