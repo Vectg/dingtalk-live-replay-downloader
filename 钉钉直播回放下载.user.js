@@ -1359,16 +1359,6 @@
            非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转。
            颜色与 3s 慢速取自参考站 web-motion-showcase 的 Border Beam：
            conic 渐变 transparent→蓝→#38bdf8→#ec4899，3s linear infinite。 */
-        /* 下载光环：面板最外层一圈流动的渐变光带。
-           关键设计（v3.0.5 重写）：**光环不再是独立 fixed 层，而是 .body 的兄弟节点，
-           尺寸完全由 CSS 决定**——绝对定位 + inset:0 + width/height:100%，浏览器自己
-           把它撑到与面板同大同小。之前那套「JS 读 getBoundingClientRect 再回写 width/
-           height/left/top」在原理上就一定会漏：面板尺寸变化的**原因**有十几次（transition、
-           子元素展开、内容换行、窗口缩放、字体加载），JS 只能靠事件去追，追漏一次就永久
-           错位（实测 20~187px）。改成 CSS 约束后不存在「追不上」这件事。
-           SVG 用 pathLength=100 归一化周长，于是 dasharray 是纯比例（28 72），
-           面板怎么变宽变窄，光带长度都占 28%，不需要按真实周长重算。
-           rx 用百分比：描边落在面板圆角之外 1.5px 处，圆角随尺寸自适应。 */
         /* 下载光环：面板最外层一圈流动的渐变光带（v3.0.7 重写）。
            两个结构性决定，各自解决一类「追不上」：
            1) 光环是 #dlr-panel 的直接子元素，尺寸交给 CSS（width/height:100%）。
@@ -1397,8 +1387,6 @@
         /* 光带的流动由 SVG 内的 <animateTransform> 驱动（SMIL），没有 CSS 动画。
            CSS 无法动画 gradientTransform，所以这里必须用 SMIL；
            prefers-reduced-motion 下用 display:none 把它整体关掉。 */
-            to{stroke-dashoffset:-100}
-        }
         #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
