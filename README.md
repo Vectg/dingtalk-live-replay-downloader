@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.6.2-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-2.6.3-informational)](CHANGELOG.md)
 
 A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
@@ -12,7 +12,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v2.6.2）
+## 功能（v2.6.3）
 
 **核心**
 
@@ -57,7 +57,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 **面板外观**
 
-- **毛玻璃**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
+- **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
 - **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起。**在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起。
 - **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）。拖动面板时自动折叠「更多设置」与输出预览区，拖完自动恢复原状态——折叠区在拖动过程中只会碍事。不想这个行为可以在更多设置里关掉。

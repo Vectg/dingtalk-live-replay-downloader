@@ -1034,7 +1034,9 @@ section('队列输入解析');
     const r3 = parseQueueInput([RID + ' ' + UUID, '乱写', RID + ' u2'].join('\n'));
     eq(r3.out.length, 2, '有效行照常解析');
     eq(r3.errs.length, 1, '无效行单独报出');
-    ok(r3.errs[0].includes('第 2 行'), '错误信息指向具体行号', r3.errs[0]);
+        // 只断言语义（行号 + 格式提示），不绑死空格：文案统一会把「第 2 行」的空格压掉
+    ok(/第\s*2\s*行/.test(r3.errs[0]) && /格式不对/.test(r3.errs[0]),
+        '错误信息指向具体行号并说明格式', r3.errs[0]);
 
     // CRLF 与末尾空行
     eq(parseQueueInput(RID + ' ' + UUID + '\r\n' + RID + ' u2\r\n').out.length, 2, 'CRLF 正确切分');

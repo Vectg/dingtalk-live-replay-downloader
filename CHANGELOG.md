@@ -7,7 +7,20 @@
 
 ### 计划
 - **内嵌播放器** / **推送到下载器**(aria2)/ **视口自适应深度优化**: 均顺延到 3.0.0 之后.
+## [2.6.3] - 2026-10-04
+
+### 变更
+- **面板文案统一为英文标点**(用户要求): 全角 `：，。（）；、` 全部换成
+  `: , . ( ); ,`, `「」` 换成双引号, `…` 换成 `...`; 装饰性间隔符 `·` 换成 `|`,
+  去掉标点后多余的空格. 涉及面板模板 20 处与运行时文案 171 处(日志/状态栏/报错/
+  tooltip), **代码注释保持中文不变**.
+- **「毛玻璃」改为「开启毛玻璃效果」**, 与其它开关的动词开头写法一致.
+### 修复
+- 文案统一时若连带 `strip()` 字面量, 会把日志刻意的前导缩进(对齐用)一起删掉;
+  实测已保住 `appendLog('   标题: ')` 这类缩进, 只清理尾部空格.
+- 队列解析的错误断言改为正则 `/第\s*2\s*行/` + `/格式不对/`, 只验语义不绑死空格.
 ## [2.6.2] - 2026-10-04
+
 
 ### 修复
 - **BUGFIX(用户实测): 下载光环不可见 / 只剩一小截**.
@@ -338,7 +351,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.HEAD
+[2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.v2.6.3
 [2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.v2.6.2
 [2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.v2.6.1
 [2.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0.v2.6.0
