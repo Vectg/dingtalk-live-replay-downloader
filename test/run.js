@@ -770,6 +770,99 @@ section('自定义分辨率');
     eq(pickResVariant([{ res: '0x0', bandwidth: 9 }, { res: '640x360', bandwidth: 4 }],
         '1280x720', 1920, 1080).res, '640x360', '非法尺寸档位被跳过');
 }
+
+// ---------------------------------------------------------------- 导出 m3u8
+// 产物要能被 ffmpeg / VLC 直接吃，所以标签与顺序必须严格合规。
+section('buildM3u8（导出播放列表）');
+{
+    const { buildM3u8 } = loadFns(['buildM3u8']);
+
+    const seg = (i, over) => Object.assign({
+        url: 'https://cdn/seg' + i + '.ts',
+        sequence: i, dur: 30, start: i * 30,
+        key: null, map: null, byterange: null,
+    }, over || {});
+    const parsed = (segs, over) => Object.assign({
+        segments: segs, encrypted: false, fmp4: false, initSegment: null, totalDur: 0,
+    }, over || {});
+
+    // --- 基础 ---
+    const t1 = buildM3u8(parsed([seg(0), seg(1), seg(2)]), 'x').split('\n');
+    eq(t1[0], '#EXTM3U', '首行是 #EXTM3U');
+    ok(t1.includes('#EXT-X-VERSION:3'), '含 VERSION 声明');
+    ok(t1.includes('#EXT-X-PLAYLIST-TYPE:VOD'), '含 PLAYLIST-TYPE:VOD');
+    eq(t1[t1.length - 2], '#EXT-X-ENDLIST', '倒数第二行是 ENDLIST');
+    eq(t1[t1.length - 1], '', '以空行结尾');
+    ok(!t1.some((l) => l === '#EXT-X-BYTERANGE:'), '无 byterange 时不写该标签');
+    ok(!t1.some((l) => l.startsWith('#EXT-X-KEY')), '未加密时不写 KEY');
+    ok(!t1.some((l) => l.startsWith('#EXT-X-MAP')), '非 fMP4 时不写 MAP');
+
+    // --- TARGETDURATION 必须 >= 任意 EXTINF（规范硬要求） ---
+    const t2 = buildM3u8(parsed([seg(0, { dur: 30 }), seg(1, { dur: 30.4 }), seg(2, { dur: 12 })])).split('\n');
+    eq(t2[t2.indexOf('#EXT-X-TARGETDURATION:31')], '#EXT-X-TARGETDURATION:31',
+        'TARGETDURATION 向上取整到最长片（30.4 → 31）');
+    const t3 = buildM3u8(parsed([seg(0, { dur: 10 })])).split('\n');
+    eq(t3[t3.indexOf('#EXT-X-TARGETDURATION:10')], '#EXT-X-TARGETDURATION:10', '整秒时长不额外进位');
+    const t4 = buildM3u8(parsed([seg(0, { dur: 0 })])).split('\n');
+    ok(t4.includes('#EXT-X-TARGETDURATION:1'), '时长为 0 时保底为 1（规范要求 >= 1）');
+
+    // --- MEDIA-SEQUENCE 取首片序号 ---
+    const t5 = buildM3u8(parsed([seg(100), seg(101)])).split('\n');
+    ok(t5.includes('#EXT-X-MEDIA-SEQUENCE:100'), 'MEDIA-SEQUENCE 用首片的 sequence');
+
+    // --- EXTINF 与 URL 必须成对交替 ---
+    const t6 = buildM3u8(parsed([seg(0, { dur: 30 }), seg(1, { dur: 30 })])).split('\n');
+    const body = t6.slice(t6.indexOf('#EXTINF:30,'));
+    eq(body.slice(0, 4), ['#EXTINF:30,', 'https://cdn/seg0.ts', '#EXTINF:30,', 'https://cdn/seg1.ts'],
+        'EXTINF 与切片 URL 严格交替');
+
+    // --- 时长格式：去掉多余的尾随零 ---
+    const t7 = buildM3u8(parsed([seg(0, { dur: 30 }), seg(1, { dur: 30.5 }), seg(2, { dur: 12.25 })])).split('\n');
+    ok(t7.includes('#EXTINF:30,'), '30 → "30"（不写成 30.000）');
+    ok(t7.includes('#EXTINF:30.5,'), '30.5 保留一位小数');
+    ok(t7.includes('#EXTINF:12.25,'), '12.25 保留两位小数');
+
+    // --- AES-128 ---
+    const enc = parsed([seg(0, { key: { method: 'AES-128', uri: 'https://cdn/k.bin', iv: '0xABC' } }), seg(1)],
+        { encrypted: true });
+    const t8 = buildM3u8(enc).split('\n');
+    ok(t8.includes('#EXT-X-KEY:METHOD=AES-128,URI="https://cdn/k.bin",IV=0xABC'),
+        'KEY 标签含 URI 与 IV', t8.find((l) => l.startsWith('#EXT-X-KEY')));
+    const encNoIv = parsed([seg(0, { key: { method: 'AES-128', uri: 'https://cdn/k.bin', iv: '' } })], { encrypted: true });
+    const t9 = buildM3u8(encNoIv).split('\n');
+    ok(t9.some((l) => l === '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn/k.bin"'),
+        '无 IV 时不写空 IV 参数');
+
+    // --- fMP4：MAP 必须在第一个切片之前 ---
+    const f = parsed([seg(0, { map: { url: 'https://cdn/init.mp4' } }), seg(1)],
+        { fmp4: true, initSegment: { url: 'https://cdn/init.mp4' } });
+    const t10 = buildM3u8(f).split('\n');
+    ok(t10.includes('#EXT-X-MAP:URI="https://cdn/init.mp4"'), 'fMP4 含 MAP 标签');
+    ok(t10.indexOf('#EXT-X-MAP') < t10.indexOf('#EXTINF:30,'),
+        'MAP 出现在第一个 EXTINF 之前（规范要求）', String(t10.indexOf('#EXT-X-MAP')));
+
+    // --- BYTERANGE 两种写法 ---
+    const br = parsed([
+        seg(0, { byterange: { length: 1000, offset: 0 } }),
+        seg(1, { byterange: { length: 2000, offset: 1000 } }),
+        seg(2, { byterange: { length: 500, offset: null } }),
+    ]);
+    const t11 = buildM3u8(br).split('\n');
+    ok(t11.includes('#EXT-X-BYTERANGE:1000@0'), '带 @offset');
+    ok(t11.includes('#EXT-X-BYTERANGE:2000@1000'), '续段 @offset');
+    ok(t11.includes('#EXT-X-BYTERANGE:500'), '省略 @ 时只写长度');
+    ok(!t11.includes('#EXT-X-BYTERANGE:500@'), 'offset 为 null 不写 @null');
+    // BYTERANGE 必须在对应 URL 之前
+    ok(t11.indexOf('#EXT-X-BYTERANGE:1000@0') < t11.indexOf('https://cdn/seg0.ts'),
+        'BYTERANGE 在其切片 URL 之前');
+
+    // --- 空列表不应崩 ---
+    const t12 = buildM3u8(parsed([])).split('\n');
+    ok(t12.includes('#EXT-X-ENDLIST'), '空列表也产出合法结尾');
+    ok(t12.includes('#EXT-X-TARGETDURATION:1'), '空列表 TARGETDURATION 保底 1');
+    eq(buildM3u8({ segments: [] }).split('\n').filter((l) => l.startsWith('http')).length, 0,
+        '空列表不含任何切片 URL');
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

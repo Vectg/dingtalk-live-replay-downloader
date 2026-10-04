@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.11
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、完成/失败通知与提示音、失败切片单独重试、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      1.9.12
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -804,6 +804,46 @@
         return h ? h + ':' + p(m) + ':' + p(ss) : p(m) + ':' + p(ss);
     }
 
+    // ---------- 导出 .m3u8 播放列表 ----------
+    // 用途：把当前选中的这一路（原始/指定分辨率）导出成标准 m3u8，
+    // 便于用 VLC / ffmpeg / 另一个下载器重新拉取，或存档。
+    // 只导出当前 clips 对应的媒体清单，不含 master 的多码率分支——
+    // 因为切片已被选定，再嵌多码率反而会让别的播放器重新选一次。
+    function buildM3u8(parsed, baseName) {
+        const segs = parsed.segments || [];
+        const L = [];
+        L.push('#EXTM3U');
+        L.push('#EXT-X-VERSION:3');
+        L.push('#EXT-X-PLAYLIST-TYPE:VOD');
+        // TARGETDURATION 取最长的那一片（向上取整），规范要求 >= 任意 EXTINF
+        const maxDur = segs.reduce((m, s) => Math.max(m, s.dur || 0), 0);
+        L.push('#EXT-X-TARGETDURATION:' + Math.max(1, Math.ceil(maxDur)));
+        if (segs.length) L.push('#EXT-X-MEDIA-SEQUENCE:' + (segs[0].sequence || 0));
+        if (parsed.encrypted) {
+            // 带密钥声明才能让播放器自己解密；IV 沿用 m3u8 里的原文
+            const k = segs.find((s) => s.key && s.key.method === 'AES-128');
+            if (k) {
+                L.push('#EXT-X-KEY:METHOD=AES-128,URI="' + k.key.uri + '"' +
+                    (k.key.iv ? ',IV=' + k.key.iv : ''));
+            }
+        }
+        if (parsed.initSegment) {
+            L.push('#EXT-X-MAP:URI="' + parsed.initSegment.url + '"');
+        }
+        for (const s of segs) {
+            const dur = (s.dur || 0).toFixed(3).replace(/\.?0+$/, '');
+            L.push('#EXTINF:' + dur + ',');
+            if (s.byterange && s.byterange.length) {
+                L.push('#EXT-X-BYTERANGE:' + s.byterange.length +
+                    (s.byterange.offset != null ? '@' + s.byterange.offset : ''));
+            }
+            L.push(s.url);
+        }
+        L.push('#EXT-X-ENDLIST');
+        L.push('');
+        return L.join('\n');
+    }
+
     // ---------- 分辨率：自定义输入与常用档位 ----------
     // 播放列表里的档位常常缺（单码率回放只有一个自动项），但用户仍可能想
     // 「按更低的分辨率下」——于是允许手填 WxH。填了之后按「不超过原始分辨率、
@@ -1145,6 +1185,7 @@
         </div>
         <div class="row">
             <button id="dlr-diag" title="把版本、解析结果、失败片号、未捕获异常等导出为 .txt，便于排查问题">📋 导出诊断日志</button>
+            <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8，可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
         </div>
         <div id="dlr-preview"></div>
         <div class="sec">
@@ -2379,6 +2420,37 @@
             } finally {
                 diagBtn.disabled = false;
                 diagBtn.textContent = oldText;
+            }
+        });
+
+        // 导出 m3u8：把当前这一路的切片列表存成标准播放列表。
+        // 必须等解析成功才有内容可导，所以没解析时给出明确提示而不是导出空文件。
+        const m3u8Btn = $('dlr-m3u8');
+        m3u8Btn && m3u8Btn.addEventListener('click', async () => {
+            if (!prepCache || !prepCache.parsed || !(prepCache.parsed.segments || []).length) {
+                setStatus('⚠ 尚未解析到切片列表，请先点「下载本页回放」或等预取完成', true);
+                return;
+            }
+            const oldText = m3u8Btn.textContent;
+            m3u8Btn.disabled = true;
+            m3u8Btn.textContent = '⏳ 生成中...';
+            try {
+                const title = (prepCache.model && prepCache.model.title) || 'replay';
+                const text = buildM3u8(prepCache.parsed, title);
+                const filename = sanitize(title) + '-' + stamp() + '.m3u8';
+                // 不加 BOM：m3u8 要给 ffmpeg / VLC 读，BOM 会让部分解析器把首行当成标签名
+                const blob = new Blob([text], { type: 'application/vnd.apple.mpegurl;charset=utf-8' });
+                await downloadBlob(blob, filename);
+                const n = prepCache.parsed.segments.length;
+                appendLog('📄 已导出 m3u8：' + filename + '（' + n + ' 片' +
+                    (prepCache.parsed.encrypted ? ' · AES-128' : '') +
+                    (prepCache.parsed.fmp4 ? ' · fMP4' : '') + '）');
+                setStatus('📄 已导出 ' + filename + '（' + n + ' 片）');
+            } catch (e) {
+                setStatus('❌ 导出 m3u8 失败：' + e.message, true);
+            } finally {
+                m3u8Btn.disabled = false;
+                m3u8Btn.textContent = oldText;
             }
         });
 
