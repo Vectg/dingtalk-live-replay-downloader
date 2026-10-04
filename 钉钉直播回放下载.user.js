@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.4.0
+// @version      2.5.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1352,6 +1352,10 @@
         /* 拖动中：禁掉过渡，否则 width/left 一起动画会粘滞 lagging 手感 */
         #dlr-panel.dragging{transition:none!important}
         #dlr-panel.dragging .drag{cursor:grabbing}
+        /* 「点这里打开帧级截取」的跳转高亮：只在用户点过来时闪一下 */
+        #dlr-panel .chk.flash{animation:dlrFlash 1.1s ease-out 2}
+        @keyframes dlrFlash{0%,100%{background:transparent}
+            40%{background:rgba(61,110,255,.32);border-radius:5px}}
         #dlr-panel.frost .body{backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px;
             /* 右侧让开绝对定位的「收起」按钮（约 42px 宽 + 8px 边距），避免标题被盖住 */
@@ -1556,7 +1560,7 @@
                 <label style="min-width:16px">至</label>
                 <input type="text" id="dlr-to" placeholder="结束" style="width:112px" spellcheck="false">
             </div>
-            <div class="tip" id="dlr-clip-tip">截取留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。</div>
+            <div class="tip" id="dlr-clip-tip"></div>
         </div>
         <div class="sec"><div class="row"><button id="dlr-go" class="primary"><span id="dlr-spin"></span>下载本页回放</button></div></div>
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
@@ -1585,7 +1589,8 @@
                     <input type="number" id="dlr-retry" min="1" max="10" value="3">
                 </div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-smart">智能调度（贪心优先 + 并发自适应）</label></div>
-                <div class="row"><label class="chk"><input type="checkbox" id="dlr-frameclip">帧级精确截取（实验性）</label></div>
+                <div class="row"><label class="chk" title="默认关闭。开启后起止点会对齐到关键帧（精度可达帧级），但需要先下载完整回放再裁剪，流量比切片对齐多。">
+                    <input type="checkbox" id="dlr-frameclip">帧级精确截取（实验性 · 默认关）</label></div>
                 <div class="row">
                     <label>面板状态</label>
                     <select id="dlr-mini-def" style="flex:1">
@@ -2680,6 +2685,30 @@
         // 帧级精确截取：默认关闭（标为实验性）。它需要逐帧解析视频流找关键帧，
         // 对 CPU 和时长都有额外开销，收益只在需要精确起止点时才明显。
         bindChk('dlr-frameclip', 'dlr_frameclip', false);
+
+        // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。
+        // 链接由提示更新函数在运行时生成（晚于此处执行），直接
+        // getElementById('dlr-open-frameclip') 此刻拿到 null，绑定会静默失效；
+        // 委托则无论链接何时重建都生效。
+        const clipTipEl = $('dlr-clip-tip');
+        if (clipTipEl) {
+            clipTipEl.addEventListener('click', (e) => {
+                const a = e.target.closest && e.target.closest('#dlr-open-frameclip');
+                if (!a) return;
+                e.preventDefault();
+                const mt2 = $('dlr-more-t'), mb2 = $('dlr-more-b');
+                if (mt2 && mb2 && !mb2.classList.contains('open')) mt2.click();
+                const chk = $('dlr-frameclip');
+                const lab = chk && chk.closest('.chk');
+                if (lab) {
+                    lab.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    lab.classList.remove('flash');
+                    void lab.offsetWidth;      // 强制回流，让动画能重放
+                    lab.classList.add('flash');
+                    setTimeout(() => lab.classList.remove('flash'), 2400);
+                }
+            });
+        }
         bindChk('dlr-notify-desktop', 'dlr_notify_desktop', true);
         bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
         // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，
@@ -3242,11 +3271,20 @@
             const fromEl = $('dlr-from'), toEl = $('dlr-to'), tip = $('dlr-clip-tip');
             if (fromEl) fromEl.placeholder = '开始 ' + hint.unit;
             if (toEl) toEl.placeholder = '结束 ' + hint.unit;
+            // 提示行结构拆成三段：纯文本 + 跳转链接 + 纯文本尾巴。
+            // 不能用 tip.textContent = ... 整体覆写——那会把里面的 <a> 一起替换掉，
+            // 链接会在启动时被无声抹掉（textContent 赋值会连子节点一起干掉）。
             if (tip) {
                 tip.textContent = hint.capHint
-                    ? '留空为整段；本回放总时长 ' + hint.capHint + '，可填到 ' + hint.unit +
-                      '（按切片边界对齐，约 30 秒粒度）'
-                    : '留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。';
+                    ? '留空为整段；本回放总时长 ' + hint.capHint + '，可填到 ' + hint.unit + '。'
+                    : '留空为整段。当前按切片边界对齐（约 30 秒粒度）。想要帧级精度？';
+                const a = document.createElement('a');
+                a.href = '#';
+                a.id = 'dlr-open-frameclip';
+                a.style.cssText = 'color:#6f9bff;cursor:pointer;text-decoration:underline';
+                a.textContent = '点这里打开「帧级精确截取」';
+                tip.appendChild(a);
+                tip.appendChild(document.createTextNode('——在「更多设置」里，开启后会先下载完整回放再裁剪，流量更多。'));
             }
             [fromEl, toEl].forEach((el) => {
                 if (el && el.value) el.value = normalizeClipText(el.value, clipUnit);

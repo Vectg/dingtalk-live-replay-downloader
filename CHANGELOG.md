@@ -6,10 +6,24 @@
 ## [未发布]
 
 ### 计划
-- **内嵌播放器**:把播放器嵌进钉钉页面自带播放器位置（默认关闭）. **顺延到 3.0.0 之后**,
-  需先确认钉钉回放页在未登录/可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
-- **推送到下载器**（aria2 RPC 等本地下载器集成）:同样顺延到 3.0.0 之后.
+- **内嵌播放器**:顺延到 3.0.0 之后.
+- **推送到下载器**（aria2 RPC）:同样顺延到 3.0.0 之后.
+## [2.5.0] - 2026-10-04
+
+### 新增
+- **帧级精确截取的入口指引**:截取区提示行里加蓝色链接「点这里打开『帧级精确截取』」,
+  点击自动展开「更多设置」并让该开关闪两下, 不用用户自己在更多设置里翻找.
+- 开关标题改为「帧级精确截取（实验性 · 默认关）」并补充 title 说明.
+### 修复
+- 提示行的更新逻辑用 `textContent =` 整体覆写, 会把里面的跳转链接一起替换掉——
+  链接在启动时就被无声抹掉. 改为「纯文本节点 + 独立链接节点 + 文本尾巴」三段拼接.
+- 跳转链接改为**事件委托**绑在提示行容器上: 链接由提示更新函数在运行时生成
+  (晚于绑定代码执行), 直接 `getElementById` 此刻拿到 null, 绑定会静默失效.
+### 技术细节
+- 帧级精确截取**仍默认关闭**(用户 2026-10-04 决定): 切片边界对齐已能满足多数需求,
+  帧级精修要先下完整回放, 流量代价大, 交给用户按需开启——但必须让他知道在哪开.
 ## [2.4.0] - 2026-10-04
+
 
 ### 新增
 - **面板可拖拽**:按住标题区即可拖动, 位置写入 `GM_setValue('dlr_pos')`, 刷新后恢复.
@@ -257,7 +271,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0.HEAD
+[2.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.v2.5.0
 [2.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.v2.4.0
 [2.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1.v2.3.0
 [2.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.0.v2.2.1
