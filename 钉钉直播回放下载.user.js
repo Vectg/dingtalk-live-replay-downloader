@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.0
+// @version      1.9.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -971,6 +971,11 @@
         box.style.display = 'block';
     }
 
+    // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
+    // DL 跨 run 存活；partial 保存已下载切片实现「中断再下 = 断点续传」。
+    const DL = { pause: false, cancel: false, running: false, purge: false };
+    let partial = null;   // {key, datas} —— 中断时保留，purge 时清空
+
     // ---------- 主流程 ----------
     // ---------- 进度条 ----------
     function progressReset() {
@@ -984,6 +989,9 @@
         p.querySelector('.pct').textContent = '0%';
         const xb = $('dlr-ex-bar'); if (xb) xb.style.width = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
+        DL.running = true; DL.pause = false; DL.cancel = false;
+        const ctl = $('dlr-ctl'); if (ctl) ctl.style.display = 'flex';
+        const pb = $('dlr-pause'); if (pb) pb.textContent = '⏸ 暂停';
         panel.classList.add('dling');
         if (window.__ringShow) try { window.__ringShow(); } catch (e) {}
     }
@@ -1007,6 +1015,9 @@
         if (s) s.style.display = 'none';
         panel.classList.remove('dling');
         if (window.__ringHide) try { window.__ringHide(); } catch (e) {}
+        DL.running = false; DL.pause = false; DL.cancel = false; DL.purge = false;
+        const ctl = $('dlr-ctl'); if (ctl) ctl.style.display = 'none';
+        const pb = $('dlr-pause'); if (pb) pb.textContent = '⏸ 暂停';
         if (!p) return;
         if (ok) {
             progressSet(100, '完成');
@@ -1211,23 +1222,63 @@
 
             appendLog('④ 下载切片（并发 ' + opts.threads + '，重试 ' + opts.retry + '）...');
             const datas = new Array(segs.length);
+            // 断点续传：命中同 key 的 partial 缓存则直接复用已下载切片
+            const dlKey = roomId + '|' + liveUuid + '|' + (opts.res || '') +
+                '|' + (clip.range ? clip.range.from + '-' + clip.range.to : 'full');
+            let resumed = 0;
+            if (partial && partial.key === dlKey &&
+                partial.datas && partial.datas.length === segs.length) {
+                for (let i = 0; i < segs.length; i++) {
+                    if (partial.datas[i]) { datas[i] = partial.datas[i]; resumed++; }
+                }
+                if (resumed) appendLog('   ♻ 命中断点缓存，已恢复 ' + resumed + '/' + segs.length + ' 个切片');
+            }
             const failures = [];   // {index, url, reason}
-            let cursor = 0, done = 0;
+            let cursor = 0, done = resumed;
             const keyCache = new Map();
             const span = P.dlEnd - P.dlStart;
-            const updProgress = () => progressSet(P.dlStart + (done / segs.length) * span,
-                '切片 ' + done + '/' + segs.length);
+            // 速度（EMA 平滑）+ 预计剩余时间
+            let speedBps = 0, lastTickT = Date.now(), lastTickBytes = 0, gotBytes = 0;
+            const fmtSpeed = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB/s'
+                : (b >= 1024 ? Math.round(b / 1024) + ' KB/s' : Math.round(b) + ' B/s');
+            const updProgress = () => {
+                const now = Date.now(), dt = (now - lastTickT) / 1000;
+                if (dt >= 1) {
+                    const inst = (gotBytes - lastTickBytes) / dt;
+                    speedBps = speedBps ? speedBps * 0.6 + inst * 0.4 : inst;
+                    lastTickT = now; lastTickBytes = gotBytes;
+                }
+                const remain = segs.length - done;
+                const avg = done ? gotBytes / (done - resumed) || 0 : 0;
+                const eta = (speedBps > 0 && avg > 0) ? Math.round((avg * remain) / speedBps) : null;
+                let label = '切片 ' + done + '/' + segs.length;
+                if (speedBps > 0) label += ' · ' + fmtSpeed(speedBps);
+                if (eta !== null && eta >= 0 && remain > 0) label += ' · 剩 ' + fmtTime(eta);
+                if (DL.pause) label += ' · 已暂停';
+                progressSet(P.dlStart + (done / segs.length) * span, label);
+            };
 
             const worker = async () => {
                 while (true) {
-                    const i = cursor++;
-                    if (i >= segs.length) break;
+                    if (DL.cancel) return;
+                    // 暂停：原地等待，恢复后继续取下一片
+                    while (DL.pause && !DL.cancel) await new Promise((r) => setTimeout(r, 120));
+                    if (DL.cancel) return;
+                    let i = cursor++;
+                    if (i >= segs.length) return;
+                    // 跳过断点缓存里已有的切片
+                    while (i < segs.length && datas[i]) i = cursor++;
+                    if (i >= segs.length) return;
                     const seg = segs[i];
                     let lastErr = null;
                     for (let t = 0; t < opts.retry; t++) {
+                        if (DL.cancel) return;
+                        while (DL.pause && !DL.cancel) await new Promise((r) => setTimeout(r, 120));
+                        if (DL.cancel) return;
                         try {
                             const got = await downloadSegment(seg, keyCache, 0);
                             datas[i] = got.bytes;
+                            gotBytes += got.bytes.length;
                             done++;
                             updProgress();
                             if (done % 10 === 0 || done === segs.length) appendLog('   ' + done + '/' + segs.length);
@@ -1244,6 +1295,21 @@
             };
             await Promise.all(Array.from({ length: opts.threads }, worker));
 
+            // 中断/删除：保留（或清空）已下载切片供下次续传，本次不算失败
+            if (DL.cancel) {
+                const gotCount = datas.filter(Boolean).length;
+                if (DL.purge) {
+                    partial = null;
+                    setStatus('🗑 已删除全部下载缓存（' + gotCount + ' 片已放弃），点下载将重新开始。');
+                } else {
+                    partial = { key: dlKey, datas: datas.slice() };
+                    setStatus('⏹ 已中断：已下载 ' + done + '/' + segs.length +
+                        '（已缓存，点「下载本页回放」断点续传）');
+                }
+                progressDone(false);
+                return;
+            }
+
             // 失败诊断：单行模式，压成一条总结 + 建议（合并进最终错误消息）
             if (failures.length) {
                 const first = failures[0];
@@ -1256,6 +1322,7 @@
                 appendLog('❌ ' + failures.length + '/' + segs.length + ' 切片失败：#' + first.index + ' ' + first.reason);
                 throw new Error(failures.length + '/' + segs.length + ' 切片失败（#' + first.index + ' ' + first.reason + '）。建议：' + advice);
             }
+            partial = null;   // 全部下载成功，断点缓存失效
 
             appendLog('⑤ 拼接 ...');
             progressSet(P.mux, '拼接');
@@ -1571,6 +1638,33 @@
             setMini(true);
         });
         applyMini();
+
+        // 下载控制：暂停/继续、中断、删除已下载
+        const pauseBtn = $('dlr-pause');
+        pauseBtn && pauseBtn.addEventListener('click', () => {
+            if (!DL.running) return;
+            DL.pause = !DL.pause;
+            pauseBtn.textContent = DL.pause ? '▶ 继续' : '⏸ 暂停';
+            setStatus(DL.pause ? '⏸ 已暂停：进度已保留，点「▶ 继续」恢复下载'
+                              : '▶ 继续下载中…');
+        });
+        const cancelBtn = $('dlr-cancel');
+        cancelBtn && cancelBtn.addEventListener('click', () => {
+            if (!DL.running) return;
+            DL.cancel = true;
+            setStatus('⏹ 正在停止…（已下载切片会保留，可断点续传）');
+        });
+        const purgeBtn = $('dlr-purge');
+        purgeBtn && purgeBtn.addEventListener('click', () => {
+            if (DL.running) {
+                DL.purge = true;
+                DL.cancel = true;
+                setStatus('🗑 正在清空全部已下载切片…');
+            } else {
+                partial = null;
+                setStatus('🗑 下载缓存已清空，下次下载将从头开始');
+            }
+        });
 
         $('dlr-go').addEventListener('click', () => {
             const raw = ($('dlr-url').value || '').trim() || location.href;
