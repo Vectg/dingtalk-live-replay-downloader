@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.6.1
+// @version      2.6.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1348,7 +1348,10 @@
         #dlr-ring .ring-beam{fill:none;stroke-width:3.5;stroke-linecap:round;
             filter:drop-shadow(0 0 5px rgba(61,110,255,.85));
             animation:dlrRingDash 3s linear infinite}
-        @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:-400}}
+        /* 偏移量用 CSS 变量：JS 按真实周长写入 --ring-perim，
+           动画整周期正好走完一圈，不会像写死 -400 那样在高周长面板上
+           看起来「走得很快」或「几乎不动」。 */
+        @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:calc(-1 * var(--ring-perim, 900px))}}
         #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
             border:1px solid #2a2e37;border-radius:12px;
@@ -1882,6 +1885,18 @@
         p.querySelector('.pct').textContent = '0%';
         const xb = $('dlr-ex-bar'); if (xb) xb.style.width = '0%';
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
+        // 进度条由隐藏变为显示，面板高度随之变化 —— 光环要立刻跟上，
+        // 且进度条自身有展开过渡，结束后再补一次 sync（transitionend 不冒泡，
+        // 只能直接监听进度条元素）。
+        if (window.__ringSync) {
+            try { window.__ringSync(); } catch (e) { }
+            if (!p.__ringBound && window.__ringSync) {
+                p.__ringBound = true;
+                p.addEventListener('transitionend', () => {
+                    try { window.__ringSync(); } catch (e) { }
+                });
+            }
+        }
         DL.running = true; DL.pause = false; DL.cancel = false;
         const ctl = $('dlr-ctl'); if (ctl) ctl.style.display = 'flex';
         const pb = $('dlr-pause'); if (pb) pb.textContent = '⏸ 暂停';
@@ -1901,6 +1916,10 @@
         p.querySelector('.pct').textContent = label ? (label + ' ' + v + '%') : (v + '%');
         const xb = $('dlr-ex-bar');
         if (xb) xb.style.width = v + '%';   // 收缩条进度同步
+        // 光环跟随面板几何：进度条宽度变化、状态文案换行、折叠区展开收起
+        // 都会改变面板尺寸，而那些并不一定触发面板自身的 transition，
+        // 只靠 transitionstart 同步会让光环与面板错位。
+        if (window.__ringSync) try { window.__ringSync(); } catch (e) { }
     }
     function progressDone(ok) {
         const p = $('dlr-progress');
@@ -2686,8 +2705,7 @@
         const ringBeam = document.createElementNS(NS, 'rect');
         ringBeam.setAttribute('class', 'ring-beam');
         ringBeam.setAttribute('stroke', 'url(#dlrBeamGrad)');
-        ringBeam.setAttribute('pathLength', '400');
-        ringBeam.setAttribute('stroke-dasharray', '110 290');
+
         ring.appendChild(ringGrad);
         ring.appendChild(ringTrack);
         ring.appendChild(ringBeam);
@@ -2707,11 +2725,26 @@
                 el.setAttribute('height', Math.max(0, H - 4));
                 el.setAttribute('rx', rx);
             });
-            };
+            // dasharray 必须按**真实周长**设置。
+            // 原来写死 pathLength=400 + dasharray 110 290：pathLength 会把实际周长
+            // （几百 px）强行归一化成 400，dasharray 的比例随之失真，光带缩成一小段
+            // 而不是沿整圈流动——这正是「光环看不见 / 只有一小截」的根因。
+            const cw = Math.max(0, W - 4), ch = Math.max(0, H - 4);
+            const perim = 2 * (cw + ch) - 8 * rx + 2 * Math.PI * rx;   // 圆角矩形周长
+            if (perim > 0) {
+                const seg = Math.max(24, perim * 0.28);   //亮段约占周长 28%
+                ringBeam.setAttribute('stroke-dasharray', seg + ' ' + (perim - seg));
+                ringBeam.style.strokeDashoffset = '0';
+                ringBeam.style.setProperty('--ring-perim', perim + 'px');
+            }
+        };
         syncRing();
         // 光环显隐：用 .on 类切换（SVG 无 border，改由 CSS opacity 控制）
-        const ringHide = () => { ring.classList.remove('on'); };
-        const ringShow = () => { ring.classList.add('on'); syncRing(); };
+        // 显隐用内联 opacity，不用 class。实测本页面上 `.on{opacity:1}`
+        // 虽已匹配却仍算出 0（与 .more-body 同一个坑），class 规则不可靠；
+        // 内联优先级最高，不依赖任何样式表计算。
+        const ringHide = () => { ring.classList.remove('on'); ring.style.opacity = '0'; };
+        const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; syncRing(); };
         ringHide();
         // 收缩/展开动画期间逐帧同步（只在光环可见时跑）
         let ringRaf = 0;
@@ -2725,6 +2758,7 @@
         panel.addEventListener('transitionend', ringAnimStop);
         window.__ringShow = ringShow;
         window.__ringHide = ringHide;
+        window.__ringSync = syncRing;
         statusEl = $('dlr-status');
         // 点击状态栏：展开/收起历史日志
         statusEl.title = '点击展开/收起输出历史';

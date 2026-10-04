@@ -6,8 +6,23 @@
 ## [未发布]
 
 ### 计划
-- **内嵌播放器** / **推送到下载器**（aria2）/ **视口自适应深度优化**:均顺延到 3.0.0 之后.
+- **内嵌播放器** / **推送到下载器**(aria2)/ **视口自适应深度优化**: 均顺延到 3.0.0 之后.
+## [2.6.2] - 2026-10-04
+
+### 修复
+- **BUGFIX(用户实测): 下载光环不可见 / 只剩一小截**.
+  根因是 `pathLength=400` + `stroke-dasharray: 110 290` 的组合: pathLength 会把
+  实际周长(本例 2722px)强行归一化成 400, dasharray 的比例随之失真, 光带缩成
+  极短的一段. 现在按真实周长动态计算 dasharray(亮段占 28%), 动画偏移改用 CSS
+  变量 `--ring-perim`, 整周期正好走完一圈.
+- **BUGFIX: 光环显隐不可靠**. `.on{opacity:1}` 在本页面上已匹配却仍算出 0
+  (与 .more-body 同一个坑), 改为内联 opacity.
+- **BUGFIX: 光环与面板错位**. 原来只在面板自身 transitionstart/end 时同步,
+  而进度条出现/宽度变化、折叠区展开收起并不触发面板 transition. 现在
+  `progressReset` / `progressSet` 都会调 `syncRing`, 并监听进度条自身的
+  `transitionend`(transitionend 不冒泡, 只能直接绑元素)补一次同步.
 ## [2.6.1] - 2026-10-04
+
 
 ### 新增
 - **面板视口自适应**:面板高度上限跟随窗口可用高度(`calc(100vh - 140px)`),
@@ -323,7 +338,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.HEAD
+[2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.v2.6.2
 [2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.v2.6.1
 [2.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0.v2.6.0
 [2.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.v2.5.0
