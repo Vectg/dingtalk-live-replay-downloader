@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.2
+// @version      1.9.3
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1611,15 +1611,21 @@
         // 收缩 / 展开：不用时缩成一个小图标，状态持久化
         // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
         const applyMini = () => panel.classList.toggle('mini', miniState);
+        // 归一化：'1'/1/true/'true' = 收缩，'0'/0/false/'false' = 展开，缺省 = 展开。
+        // 历史上 dlr_mini 存过布尔/字符串、dlr_mini_def 存过数字，严格 === 会漏判，
+        // 导致「面板实际收缩、下拉框却显示默认展开」。
+        const triState = (v) => (v === '1' || v === 1 || v === true || v === 'true') ? 1
+            : (v === '0' || v === 0 || v === false || v === 'false') ? 0 : -1;
         let miniState = false;
         try {
-            // 优先读「默认面板状态」选项；老用户保留 dlr_mini 兼容
-            const def = GM_getValue('dlr_mini_def');
-            if (def === '1' || def === '0') miniState = def === '1';
-            else {
-                const saved = GM_getValue('dlr_mini');
-                miniState = !(saved === undefined || saved === null) && !!saved;
-            }
+            // 优先「默认面板状态」，缺失/无法识别时回退旧键 dlr_mini
+            let t = triState(GM_getValue('dlr_mini_def'));
+            if (t < 0) t = triState(GM_getValue('dlr_mini'));
+            miniState = t === 1;
+            // 归一回写：杂散值统一成规范 '0'/'1' 与布尔，兼容分支只在首启走一次
+            const canon = miniState ? '1' : '0';
+            if (GM_getValue('dlr_mini_def') !== canon) GM_setValue('dlr_mini_def', canon);
+            if (GM_getValue('dlr_mini') !== miniState) GM_setValue('dlr_mini', miniState);
         } catch (e) {}
         const setMini = (v) => {
             miniState = v;
@@ -1635,7 +1641,8 @@
         };
         // 默认展开/收缩：决定下次打开页面时的初始状态；手动收起/展开也会同步该选项
         const miniDef = $('dlr-mini-def');
-        try { miniDef.value = GM_getValue('dlr_mini_def') === '1' ? '1' : '0'; } catch (e) { }
+        // 下拉框直接反映上面算出的真实初始状态（与面板同源），不再自己另读一遍键
+        try { if (miniDef) miniDef.value = miniState ? '1' : '0'; } catch (e) { }
         miniDef.addEventListener('change', () => {
             try { GM_setValue('dlr_mini_def', miniDef.value); } catch (e) { }
             try { GM_setValue('dlr_mini', miniDef.value === '1'); } catch (e) { }
