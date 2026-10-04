@@ -9,6 +9,23 @@
 - **内嵌播放器**:把播放器嵌进钉钉页面自带播放器位置（默认关闭）. **顺延到 3.0.0 之后**,
   需先确认钉钉回放页在未登录/可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
 - **推送到下载器**（aria2 RPC 等本地下载器集成）:同样顺延到 3.0.0 之后.
+## [2.3.0] - 2026-10-04
+
+### 新增
+- **截取时间单位自动识别**:时间框不再预设 `mm:ss`, 解析出回放总时长后按需切换——
+  不足 1 小时提示 `mm:ss`, 达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99,
+  可填 `100:00:00`）, 框内灰字提示随总时长实时更新.
+- **失焦自动补零**:离开时间框时把 `1:2:3` 规范成 `01:02:03`, `1:2` 规范成 `1:02`.
+  全角数字/中文冒号/空白/零宽字符照旧自动修复.
+### 修复
+- 规范化函数遇到四段输入（如 `1:2:3:4`）时会**静默截断成 `01`**, 用户输入被篡改.
+  现在非法层数与非法字符一律原样返回, 交由 `parseTimeArg` 明确报错.
+### 技术细节
+- 两段写法（`1:30`）在 `mm:ss` 与 `hh:mm` 之间天然歧义, **刻意不做猜测性改写**——
+  补成三段会把 90 秒变成 1 小时 30 分. 一律按 `mm:ss` 解析, 超限时错误信息给出可用写法.
+- 零宽字符（U+200B/200C/200D/FEFF/00A0/3000）用**码点数值**过滤, 不写进正则字面量:
+  编辑工具改写文本时会悄悄吃掉其中一个（U+200B 就这么丢过一次）, 码点不会被文本层影响.
+- 总时长从 `prep()` 传给面板的 `init()`, 两者是兄弟函数作用域不通, 故走模块级钩子 `onClipDur`.
 ## [2.2.1] - 2026-10-04
 
 ### 新增
@@ -225,7 +242,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.HEAD
+[2.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1.v2.3.0
 [2.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.0.v2.2.1
 [2.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.1.0.v2.2.0
 [2.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.0.0.v2.1.0

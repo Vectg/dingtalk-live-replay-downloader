@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.2.1-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-2.3.0-informational)](CHANGELOG.md)
 
 A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
@@ -12,7 +12,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v2.2.0）
+## 功能（v2.3.0）
 
 **核心**
 
@@ -51,7 +51,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 **下载后处理**
 
 - **自定义文件名**：面板可直接填写输出文件名，**留空则自动使用回放标题**（placeholder 即回放标题）；误带的 `.mp4`/`.ts` 后缀会自动去掉。勾选「文件名加时间戳」后，placeholder 自动追加 `_时间戳` 且每秒刷新。
-- **截取时长**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。输入校验：自动修复中文/全角冒号与全角数字；拒绝乱码、四段冒号、秒位 >59、开始 ≥ 结束；结束超出总时长自动截到末尾并提示。
+- **截取时长（v2.3.0 起自动识别单位）**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。**时间框不再预设格式**——解析出回放总时长后自动告诉你上限：总时长不足 1 小时给 `mm:ss`，达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`），框内灰字提示随总时长实时变化。**失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复。两段写法（如 `1:30`）不做猜测性改写——它在 `mm:ss` 与 `hh:mm` 之间天然歧义，一律按 `mm:ss` 解析并在超限时给出可用写法。结束超出总时长自动截到末尾并提示。
 - **内置预览**：MP4 下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
 - **文件名加时间戳**。
 
@@ -103,7 +103,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 ## 使用
 
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
-2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（`mm:ss` 或 `hh:mm:ss`，留空为全部）、并发、重试。
+2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部）、并发、重试。
 3. 点「下载本页回放」，状态栏依次显示：取 token → 播放地址 → m3u8 → 切片 `n/N` → 拼接 → 保存；面板外右下角会有旋转光圈提示进行中。
 4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速与音量；同时弹出保存对话框。
 5. 不用时可点「收起」把面板缩成右下角小图标，需要时点图标展开；下载进行中光圈始终可见。

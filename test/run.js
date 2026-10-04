@@ -128,6 +128,76 @@ section('parseTimeArg');
     throws(() => parseTimeArg('-5', '开始'), '负号报错');
 }
 
+section('clipTimeHint / normalizeClipText（截取时间单位自动识别 v2.3.0）');
+{
+    const { clipTimeHint, normalizeClipText, parseTimeArg } = loadFns(
+        ['clipTimeHint', 'normalizeClipText', 'parseTimeArg', 'fmtTime', 'stripClipNoise']);
+
+    // 单位上限：≥1 小时才给 hh:mm:ss，否则 mm:ss
+    eq(clipTimeHint(1813.3).unit, 'mm:ss', '真实回放 1812.9 秒（30 分钟）→ mm:ss');
+    eq(clipTimeHint(3600).unit, 'hh:mm:ss', '正好 1 小时 → hh:mm:ss');
+    eq(clipTimeHint(1812882).unit, 'hh:mm:ss', 'API 给的是毫秒量级：1812882 秒 → hh:mm:ss');
+    eq(clipTimeHint(7200).unit, 'hh:mm:ss', '2 小时 → hh:mm:ss');
+    eq(clipTimeHint(36000).unit, 'hh:mm:ss', '10 小时 → hh:mm:ss（小时位不限于 99）');
+    // 时长未知 → 不预设上限，但也不能崩
+    eq(clipTimeHint(0).unit, 'mm:ss', '时长未知 → 保守 mm:ss');
+    eq(clipTimeHint(0).capHint, null, '时长未知 → capHint 为 null');
+    eq(clipTimeHint(NaN).capHint, null, 'NaN → capHint 为 null');
+    eq(clipTimeHint(undefined).capHint, null, 'undefined → capHint 为 null');
+    eq(clipTimeHint(-5).capHint, null, '负数 → capHint 为 null');
+    eq(clipTimeHint(90).capHint, '01:30', 'capHint 用 fmtTime 形态');
+
+    // mm:ss 形态下的规范化
+    eq(normalizeClipText('1:2', 'mm:ss'), '1:02', 'mm:ss 秒位补零');
+    eq(normalizeClipText('90:0', 'mm:ss'), '90:00', 'mm:ss 分钟位不补零（90:00 保持）');
+    eq(normalizeClipText('45', 'mm:ss'), '45', '裸数字不足两位不動');
+    eq(normalizeClipText('', 'mm:ss'), '', '空 → 空');
+    eq(normalizeClipText(null, 'mm:ss'), '', 'null → 空');
+
+    // hh:mm:ss 形态下的规范化
+    eq(normalizeClipText('1:2:3', 'hh:mm:ss'), '01:02:03', 'hh:mm:ss 全段补零');
+    eq(normalizeClipText('1:30', 'hh:mm:ss'), '1:30', '两段有歧义 → 原样不改写（交给 parseTimeArg）');
+    eq(normalizeClipText('100:00:00', 'hh:mm:ss'), '100:00:00', '10 小时级不被截断');
+    eq(normalizeClipText('2:00', 'hh:mm:ss'), '2:00', '两段 → 不猜小时位');
+    eq(normalizeClipText('45', 'hh:mm:ss'), '45', '裸数字 → 原样');
+
+    // 全角/空白/零宽字符：与 parseTimeArg 同规格
+    eq(normalizeClipText('１：３０', 'mm:ss'), '1:30', '全角数字+全角冒号');
+    eq(normalizeClipText(' 1 : 30 ', 'mm:ss'), '1:30', '去空白');
+    // 零宽字符用码点构造：测试文件里直接写字面量会被编辑工具悄悄吃掉
+    // （U+200B 那条就这么变成了普通 '1:30'，断言通过但什么都没测到）。
+    const zw = (cp) => '1:' + String.fromCharCode(cp) + '30';
+    eq(normalizeClipText(zw(0x200B), 'mm:ss'), '1:30', '去零宽空格 U+200B');
+    eq(normalizeClipText(zw(0x200C), 'mm:ss'), '1:30', '去零宽不连字 U+200C');
+    eq(normalizeClipText(zw(0x200D), 'mm:ss'), '1:30', '去零宽连字 U+200D');
+    eq(normalizeClipText(zw(0xFEFF), 'mm:ss'), '1:30', '去 BOM U+FEFF');
+    eq(normalizeClipText(zw(0x00A0), 'mm:ss'), '1:30', '去不换行空格 U+00A0');
+
+    // 非法字符原样交给 parseTimeArg 报错，不得在这里静默改写
+    eq(normalizeClipText('1:3a', 'mm:ss'), '1:3a', '含字母 → 原样返回');
+    eq(normalizeClipText('::', 'mm:ss'), '::', '冒号连写 → 原样返回');
+    eq(normalizeClipText('1:2:3:4', 'hh:mm:ss'), '1:2:3:4', '四段 → 原样返回');
+
+    // 回归：曾把非两段输入静默截断成 '01'（浏览器验收抓到，单测当时漏了）。
+    // 每种形态 × 每种层数都必须「要么正确规范化、要么原样返回」，绝不能丢字符。
+    // 例外：hh:mm:ss 下的三段是唯一会正确规范化的形态（1:2:3 → 01:02:03），
+    // 但 4 段及以上仍必须原样。
+    for (const unit of ['mm:ss', 'hh:mm:ss']) {
+        for (const v of ['1:2:3:4', '1:2:3:4:5', '9:8:7:6:5']) {
+            eq(normalizeClipText(v, unit), v, unit + ' 下 ' + v + ' → 原样（不截断）');
+        }
+    }
+    for (const v of ['1:2:3', '12:34:56']) {
+        eq(normalizeClipText(v, 'mm:ss'), v, 'mm:ss 下 ' + v + ' → 原样（不截断）');
+    }
+    eq(normalizeClipText('5', 'mm:ss'), '05', 'mm:ss 裸数字补零成两位');
+    eq(normalizeClipText('5', 'hh:mm:ss'), '5', 'hh:mm:ss 裸数字原样');
+
+    // 关键不变量：规范化是「同值不同写法」，解析结果必须一致
+    eq(parseTimeArg(normalizeClipText('1:2', 'mm:ss'), '开始'), 62, '规范化不改变时刻（1:2 → 62s）');
+    eq(parseTimeArg(normalizeClipText('1:2:3', 'hh:mm:ss'), '开始'), 3723, 'hh 形态同值');
+}
+
 section('clipSegments（按切片边界对齐）');
 {
     const { clipSegments } = loadFns(['clipSegments', 'fmtTime']);

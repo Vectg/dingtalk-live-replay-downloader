@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.2.0
+// @version      2.3.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1026,6 +1026,62 @@
         };
     }
 
+    // ---------- 截取时间输入的单位上限（v2.3.0） ----------
+    // 用户不该先猜「这场回放有多长」再决定填 mm:ss 还是 hh:mm:ss。
+    // 这里按已解析出的回放总时长推出「上限形态」：
+    //   总时长 ≥ 1 小时  → hh:mm:ss（三段，小时位不限 99，可到 100:00:00）
+    //   总时长 <  1 小时 → mm:ss（两段，分钟位可超 59，如 90:00）
+    //   回放还没解析出来 → 不预设上限，只把已填内容规范化（补零、去掉多余冒号）。
+    // 纯函数，不碰 DOM，便于单测；返回 {unit, text}。
+    function clipTimeHint(totalDurSec) {
+        const dur = Number(totalDurSec);
+        const has = isFinite(dur) && dur > 0;
+        const unit = has && dur >= 3600 ? 'hh:mm:ss' : 'mm:ss';
+        return { unit: unit, capHint: has ? fmtTime(dur) : null };
+    }
+
+    // 把用户输入规范化成「上限形态」的文本：补零到两位、去掉多余的冒号层数。
+    // 只做无损变换，不改变时刻本身；非法输入原样返回，交给 parseTimeArg 报错。
+    // 零宽字符用码点数值过滤而不是往正则里塞不可见字面量——编辑工具会在改写时
+    // 悄悄吃掉其中一个（U+200B 就这么丢过一次），写死码点不会被文本层改写影响。
+    // 码点表内联在函数里：单测抽取器只抽函数体、不抽外层 const，
+    // 放外面会变成 ReferenceError。
+    function stripClipNoise(s) {
+        return String(s).split('').filter((ch) => {
+            const c = ch.codePointAt(0);
+            if (c === 0x20 || (c >= 0x09 && c <= 0x0D)) return false;  // 空格/tab/换行
+            if (c === 0xA0 || c === 0x3000) return false;             // 不换行空格/全角空格
+            if (c === 0x200B || c === 0x200C || c === 0x200D || c === 0xFEFF) return false;  // 零宽/BOM
+            return true;
+        }).join('');
+    }
+    function normalizeClipText(raw, unit) {
+        const s = stripClipNoise(
+            String(raw == null ? '' : raw)
+                .replace(/[：︰﹕]/g, ':')
+                .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+        );
+        if (!s) return '';
+        const p = s.split(':');
+        if (p.some((x) => !/^\d+$/.test(x))) return s;   // 非法字符，不动
+        const n = p.map((x) => parseInt(x, 10));
+        const pad = (x) => String(x).padStart(2, '0');
+        if (unit === 'hh:mm:ss') {
+            // 只在「已经是三段」时规范化。两段（1:30）含义歧义——既可能读成
+            // 1分30秒，也可能读成 1小时30分——所以原样交给 parseTimeArg 按
+            // 既定规则（两段=mm:ss）解析，绝不在这里替用户猜。
+            if (n.length !== 3) return s;
+            return pad(n[0]) + ':' + pad(n[1]) + ':' + pad(n[2]);
+        }
+        // mm:ss：两段时首位是分钟不补零（90:00 保持原样），秒位补零。
+        // 裸数字补零成两位；其余层数（3 段、4 段…）原样返回——
+        // 早先写成无条件 pad(n[0]) 会把 '1:2:3' 静默截断成 '01'，
+        // 用户输入被篡改且毫无提示，这个 bug 是浏览器验收抓出来的，单测没覆盖到。
+        if (n.length === 2) return n[0] + ':' + pad(n[1]);
+        if (n.length === 1) return pad(n[0]);
+        return s;
+    }
+
     // ---------- 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确） ----------
     function parseTimeArg(v, label) {
         let s = String(v == null ? '' : v);
@@ -1459,11 +1515,11 @@
             </div>
             <div class="row">
                 <label>截取</label>
-                <input type="text" id="dlr-from" placeholder="开始 mm:ss" style="width:96px">
+                <input type="text" id="dlr-from" placeholder="开始" style="width:112px" spellcheck="false">
                 <label style="min-width:16px">至</label>
-                <input type="text" id="dlr-to" placeholder="结束 mm:ss" style="width:96px">
+                <input type="text" id="dlr-to" placeholder="结束" style="width:112px" spellcheck="false">
             </div>
-            <div class="tip">截取留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。</div>
+            <div class="tip" id="dlr-clip-tip">截取留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。</div>
         </div>
         <div class="sec"><div class="row"><button id="dlr-go" class="primary"><span id="dlr-spin"></span>下载本页回放</button></div></div>
         <div id="dlr-progress"><div class="bar"></div><div class="stripes"></div><div class="pct">0%</div></div>
@@ -1593,6 +1649,10 @@
     // 上次失败的片号（1-based）。为 null 表示没有待重试的失败片，按钮隐藏。
     // 成功/换 key/删除缓存时清空——避免拿上一轮的数字误导用户。
     let lastFailed = null;
+
+    // 截取输入的单位上限跟随回放总时长（v2.3.0）。prep() 与 init() 是兄弟函数，
+    // 作用域不通，所以用模块级钩子把「总时长已知」这件事传出去。
+    let onClipDur = null;
 
     // ---------- IndexedDB 断点缓存：跨刷新/关页保留已下载切片 ----------
     // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）。
@@ -1898,6 +1958,8 @@
             appendLog('   回放总时长 ' + fmtTime(parsed.totalDur) +
                 '（' + parsed.segments.length + ' 个切片）');
         }
+        // 总时长一确定就把截取输入的单位上限摆出来（≥1 小时用 hh:mm:ss）
+        if (onClipDur) onClipDur(parsed.totalDur || 0);
         // 单档 TS → 探测首片 SPS 得出原始分辨率（多档时分辨率来自变体 RESOLUTION 属性）
         let resInfo = null;
         if (!parsed.variants.length && !parsed.fmp4 && parsed.segments.length) {
@@ -3050,6 +3112,33 @@
         };
         qBox && qBox.addEventListener('input', renderQueue);
         qBox && qBox.addEventListener('change', renderQueue);
+
+        // ---------- 截取时间输入：单位上限跟随回放总时长（v2.3.0） ----------
+        // 时长未知时只规范化已填文本；解析出总时长后才知道该不该用 hh:mm:ss。
+        let clipUnit = 'mm:ss';
+        const applyClipUnit = (totalDurSec) => {
+            const hint = clipTimeHint(totalDurSec);
+            clipUnit = hint.unit;
+            const fromEl = $('dlr-from'), toEl = $('dlr-to'), tip = $('dlr-clip-tip');
+            if (fromEl) fromEl.placeholder = '开始 ' + hint.unit;
+            if (toEl) toEl.placeholder = '结束 ' + hint.unit;
+            if (tip) {
+                tip.textContent = hint.capHint
+                    ? '留空为整段；本回放总时长 ' + hint.capHint + '，可填到 ' + hint.unit +
+                      '（按切片边界对齐，约 30 秒粒度）'
+                    : '留空为整段；按切片边界对齐（约 30 秒粒度），非帧级精确。';
+            }
+            [fromEl, toEl].forEach((el) => {
+                if (el && el.value) el.value = normalizeClipText(el.value, clipUnit);
+            });
+        };
+        onClipDur = applyClipUnit;
+        applyClipUnit(0);
+        ['dlr-from', 'dlr-to'].forEach((id) => {
+            const el = $(id);
+            // blur 时规范化（不在 input 时改写，否则边打边被补零很烦）
+            el && el.addEventListener('blur', () => { el.value = normalizeClipText(el.value, clipUnit); });
+        });
         qClear && qClear.addEventListener('click', () => {
             qBox.value = '';
             Q.items = [];
