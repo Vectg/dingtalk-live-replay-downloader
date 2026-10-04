@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.0
+// @version      3.0.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -182,7 +182,7 @@
         push('  并发线程', String(readChk('dlr-thread', 'dlr_thread', '默认')));
         push('  重试次数', String(readChk('dlr-retry-num', 'dlr_retry', '默认')));
         push('  预取', readChk(null, 'dlr_prefetch', true) ? '开' : '关');
-        push('  通知', (readChk(null, 'dlr_notify_desktop', true) ? '开' : '关') + ' / 声音 ' +
+        push('  通知', (readChk(null, 'dlr_notify_desktop', false) ? '开' : '关') + ' / 声音 ' +
             (readChk(null, 'dlr_notify_sound', false) ? '开' : '关'));
         L.push('');
 
@@ -1704,7 +1704,8 @@
                         <input type="checkbox" id="dlr-drag-collapse">拖动时自动收起设置</label>
                     <label class="chk" title="打开页面后, 解析出切片列表时就在后台静默下载切片, 点下载时只需合并保存. 仅存内存, 刷新即丢弃.">
                         <input type="checkbox" id="dlr-predownload">解析后后台预下载</label>
-                    <label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
+                    <label class="chk" title="下载结束(成功保存或失败报错)时弹出系统通知, 点击可回到面板. 默认关闭.">
+                        <input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
                     <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
                 </div>
                 <div class="tip">预取播放地址与切片索引, 打开页面后无需等待即可直接下载.</div>
@@ -3010,7 +3011,7 @@
                 }
             });
         }
-        bindChk('dlr-notify-desktop', 'dlr_notify_desktop', true);
+        bindChk('dlr-notify-desktop', 'dlr_notify_desktop', false);
         bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
         // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，
         // 不跟着 DOM 走，否则用户改了开关要等下次下载才生效。

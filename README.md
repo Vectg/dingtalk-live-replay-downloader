@@ -2,11 +2,11 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-3.0.0-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-3.0.1-informational)](CHANGELOG.md)
 
-A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
+A Tampermonkey userscript that downloads publicly accessible DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
-通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件。**无需登录钉钉账号**，在回放页点一下即可。
+通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件。**无需登录钉钉账号**即可下载公开可访问的回放，在回放页点一下即可。
 
 > Only download content **you have the right to keep**. 仅用于下载你有权留存的内容。
 
@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v3.0.0）
+## 功能（v3.0.1）
 
 **核心**
 
@@ -36,7 +36,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **自定义分辨率（v1.9.11）**：分辨率下拉除播放列表声明的档位外，还列出**不超过原始分辨率**的常用档位（4K/1440p/1080p/900p/720p/540p/480p/360p/270p）；末尾的「自定义…」可手填 `宽x高`，支持 `1920X1080`、`1920×1080`、全角数字与中文冒号等常见手打写法。填的值会匹配到播放列表里最接近的真实档位——**匹配不到正好这一档时会明确告知实际用了哪一档**，不会让用户以为下了自己没填的分辨率。没有可用档位则如实说明并回到「自动」。
 - **自选更新源（v1.9.11）**：更多设置里可切换 **Gitee（默认）/ GitHub / 自动**。默认 Gitee——`raw.githubusercontent.com` 在国内时通时不通，Gitee 镜像通常稳定。切换后立即按新源重新检查一次，「发现新版」的跳转链接也跟着走对应源。
 - **只重试失败切片（v1.9.10）**：下载或完整性校验失败后，面板下方出现「♻ 只重试失败切片」按钮，旁边写明上次失败了几片、具体片号（例如「上次失败 2 片（#3 #6），其余切片已缓存」）。点它**只补这几片**，已下好的片绝不再下一遍——重试用的是 1.9.6/1.9.7 建立的 IndexedDB 断点缓存，跨刷新、关页后依然有效。换分辨率或点「删除已下载」会清掉该按钮，避免拿上一轮的数字误导。
-- **完成/失败通知（v1.9.9）**：下载结束（成功保存、或失败报错）时可选弹系统通知——标题点明成功/失败，正文带文件名与体积（失败时带具体原因与建议，点击通知可回到面板）。提示音用 WebAudio 现场合成（完成两声上行、失败三声下行），不带外部音频文件。两个开关都在「更多设置」里：系统通知**默认开**，提示音**默认关**——浏览器自动播放策略常拦未交互页面的声音，默认开容易让人以为坏了；AudioContext 已在点「下载」时预热以绕过该策略。
+- **完成/失败通知（v1.9.9）**：下载结束（成功保存、或失败报错）时可选弹系统通知——标题点明成功/失败，正文带文件名与体积（失败时带具体原因与建议，点击通知可回到面板）。提示音用 WebAudio 现场合成（完成两声上行、失败三声下行），不带外部音频文件。两个开关都在「更多设置」里，且**默认都关闭**——浏览器自动播放策略常拦未交互页面的声音，声音默认开容易让人以为坏了；AudioContext 已在点「下载」时预热以缓解该策略。需要时自行打开即可。
 - **链接解析修复（v1.9.8）**：粘贴不带域名的裸查询串（`?roomId=…&liveUuid=…`）时不再报「链接缺少 roomId/liveUuid」——旧代码在回退拼接时会把开头的 `?` 再拼一个，导致参数名带上多余问号而取不到。
 
 **性能与预取**
@@ -102,9 +102,9 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
    脚本带 `@updateURL` / `@downloadURL`，**装过一次后可直接在油猴里「检查更新」自动升级**，或用面板底部的「检查更新」。
 
-3. 在 Edge / Chrome 还需到 `edge://extensions/`（或 `chrome://extensions/`）→ 篡改猴 → 详细信息，打开 **「允许用户脚本」**。此开关默认关闭时，油猴脚本一行都不会执行，右下角不会出现面板。
+3. 在 Edge / Chrome 还需到 `edge://extensions/`（或 `chrome://extensions/`）→ 篡改猴 → 详细信息，打开 **「允许用户脚本」**。该开关默认关闭，关闭时脚本不会执行，右下角不会出现面板。
 
-> 面板不出现时：确认开关已开 → 油猴里脚本为启用状态 → 回放页 `Ctrl+F5` 强刷 → F12 Console 看报错。
+> 面板不出现时依次检查：该开关已开 → 油猴中脚本处于启用状态 → 回放页 `Ctrl+F5` 强制刷新 → F12 Console 查看报错。
 
 ---
 
@@ -112,9 +112,9 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
 2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部）、并发、重试。
-3. 打开页面后会自动在后台预下载切片（日志提示完成进度），等你要下时点「下载本页回放」几乎瞬间完成；状态栏依次显示：切片 `n/N` → 拼接 → 保存。
-4. MP4 下载完成后面板内直接出现**预览播放器**，可调倍速。
-5. 不用时可点「收起」把面板缩成右下角横条，需要时点条展开；下载进行中光环始终可见。
+3. 页面解析完成后会在后台预下载切片，日志会报完成进度。此时点「下载本页回放」只需合并保存，实际耗时取决于预下载完成度；状态栏依次显示：切片 `n/N` → 拼接 → 保存。
+4. 选择 MP4 且下载成功后，面板内会出现**预览播放器**，可调倍速。TS 无法在浏览器内预览（见已知限制）。
+5. 不用时可点「收起」把面板缩成右下角横条，点条即可展开；下载进行中光环保持可见。
 6. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页。
 
 也可以把 `.ts` 交给 ffmpeg 重封装：
@@ -129,7 +129,7 @@ Windows 下中文文件名/引号易出问题，建议用 Python `subprocess.run
 
 ## 原理
 
-- `GET https://lv.dingtalk.com/csrf` —— **绝不能带 Origin 头**，否则返回 403 `Invalid CORS request`；拿到 token 与 `XSRF-TOKEN` cookie。
+- `GET https://lv.dingtalk.com/csrf` —— 实测带上 `Origin` 头会返回 403 `Invalid CORS request`，不带则正常返回 token 与 `XSRF-TOKEN` cookie。
 - `POST https://lv.dingtalk.com/getOpenLiveInfoV2` —— body 是**单个对象** `{roomId, liveUuid}`，且必须同时带 `XSRF-TOKEN` cookie 与 `X-XSRF-TOKEN` 头（同一 token）→ 返回 `openLiveDetailModel.playbackUrl`（带签名的 m3u8，约 10 天有效）。
 - 解析 m3u8 得到带各自签名的切片 URL，并发下载后按顺序字节拼接。
 - `getOpenLiveInfo`（V1）对匿名用户 `playbackUrl` 是**空字符串**，必须用 V2；`sliceCount`/`sliceDuration` 是雪碧图参数、**不是**切片数，以 m3u8 实际条目为准。
@@ -164,7 +164,7 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 
 ## 版权提示
 
-脚本通过公开接口获取回放，**绕过 CDN 签名**。钉钉《用户协议》可能将「规避访问控制」列为违约，回放内容本身可能受版权保护。仅用于下载**你自己有权留存**的内容，请勿传播或用于商业用途。
+脚本通过钉钉的公开接口获取回放播放地址，该地址自带时效签名（约 10 天），脚本不破解也不篡改签名。钉钉《用户协议》对自动化访问与内容获取可能有专门条款，回放内容本身亦可能受版权保护。请仅下载**你有权留存**的内容，不要传播或用于商业用途。
 
 ---
 
@@ -173,13 +173,13 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 <details>
 <summary><b>Click to expand the English version</b> — click to collapse</summary>
 
-A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
+A Tampermonkey userscript that downloads publicly accessible DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
 > Only download content **you have the right to keep**.
 
 ---
 
-## Features (v3.0.0)
+## Features (v3.0.1)
 
 **Core**
 
@@ -208,7 +208,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **Delete downloaded**: wipe every cached segment of this replay.
 - **Failed-segment-only retry (v1.9.10)**: after a failure or an integrity check, a "retry failed segments only" button appears showing exactly how many failed and which (e.g. "2 failed last time (#3 #6)"). Clicking it refetches **only** those — everything already downloaded is reused via the IndexedDB resume cache (since v1.9.6), which survives reloads and closed tabs. Changing resolution or pressing 「删除已下载」 hides the button so stale numbers never mislead.
 - **Live speed and ETA**: EMA speed plus estimated time remaining, shown next to the progress bar.
-- **Completion / failure notifications (v1.9.9)**: optionally raise a system notification when a run ends — success or failure — carrying the filename and size (on failure, the cause and a suggested next step; clicking the notification returns to the panel). The sound is synthesised live with WebAudio (two rising tones on success, three falling on failure), no bundled audio file. Both switches live in 更多设置: notifications **on** by default, sound **off** by default — browser autoplay policies frequently block sound on pages without interaction, so defaulting it on makes it look broken. The AudioContext is warmed up when you press download to slip past that policy.
+- **Completion / failure notifications (v1.9.9)**: optionally raise a system notification when a run ends — success or failure — carrying the filename and size (on failure, the cause and a suggested next step; clicking the notification returns to the panel). The sound is synthesised live with WebAudio (two rising tones on success, three falling on failure), no bundled audio file. Both switches live in 更多设置 and both are **off by default** — browser autoplay policies frequently block sound on pages without interaction, so having sound on by default just makes it look broken. The AudioContext is warmed up when you press download, which mitigates that policy. Turn them on if you want them.
 
 **After the download**
 
@@ -273,7 +273,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
    The script ships `@updateURL` / `@downloadURL`, so **once installed it can upgrade itself through Tampermonkey's "check for updates"**, or via the panel's own update check.
 
-3. On Edge / Chrome you must also open `edge://extensions/` (or `chrome://extensions/`) → Tampermonkey → Details and turn on **"Allow user scripts"**. While this is off (the default) the script does not execute a single line and no panel appears.
+3. On Edge / Chrome you must also open `edge://extensions/` (or `chrome://extensions/`) → Tampermonkey → Details and turn on **"Allow user scripts"**. It is off by default; while off the script does not run and no panel appears.
 
 > If the panel is missing: confirm the toggle is on → the script is enabled in Tampermonkey → hard-reload the replay page with `Ctrl+F5` → check the F12 console for errors.
 
@@ -283,8 +283,8 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 1. Open the replay page (`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`); the panel appears at the bottom-right and reads the link automatically.
 2. Optionally set **filename** (blank uses the replay title), **output format**, **clip range** (units auto-detected, blank means everything), concurrency and retries.
-3. Once the page has parsed, segments are pre-downloaded in the background (the log reports progress), so pressing "下载本页回放" finishes almost instantly; the status line then shows segments `n/N` → merge → save.
-4. After an MP4 finishes, a preview player appears in the panel with **speed** control.
+3. Once the page has parsed, segments are pre-downloaded in the background and the log reports progress. Pressing "下载本页回放" then only has to merge and save; how long that takes depends on how much the pre-download already finished. The status line shows segments `n/N` → merge → save.
+4. With MP4 selected and the download successful, a preview player appears in the panel with **speed** control. TS cannot be previewed in a browser (see Known limitations).
 5. When you do not need it, press 「收起」 to shrink the panel to a slim bar at the bottom-right; click it to expand. The halo stays visible while downloading.
 6. You can also paste any replay link into the box and press download without staying on that page.
 
@@ -300,7 +300,7 @@ On Windows, non-ASCII filenames and quotes are easy to get wrong; prefer Python 
 
 ## How it works
 
-- `GET https://lv.dingtalk.com/csrf` — **must not carry an Origin header**, or it returns 403 `Invalid CORS request`; this yields a token plus the `XSRF-TOKEN` cookie.
+- `GET https://lv.dingtalk.com/csrf` — in practice, sending an `Origin` header makes it return 403 `Invalid CORS request`; without it the token and `XSRF-TOKEN` cookie come back normally.
 - `POST https://lv.dingtalk.com/getOpenLiveInfoV2` — the body is a **single object** `{roomId, liveUuid}`, and it must carry both the `XSRF-TOKEN` cookie and the `X-XSRF-TOKEN` header (same token) → returns `openLiveDetailModel.playbackUrl`, a signed m3u8 valid for about 10 days.
 - The m3u8 is parsed into individually signed segment URLs, downloaded concurrently and concatenated in order.
 - `getOpenLiveInfo` (V1) returns an **empty** `playbackUrl` for anonymous callers, so V2 is mandatory. `sliceCount` / `sliceDuration` are sprite-sheet parameters, **not** segment counts — trust the actual m3u8 entries.
@@ -335,7 +335,7 @@ GitHub Actions runs three jobs on every push / PR: `node --check`, the unit test
 
 ## Copyright
 
-The script retrieves replays through public interfaces, **bypassing CDN signatures**. DingTalk's Terms of Service may treat "circumventing access controls" as a breach, and replay content may itself be copyrighted. Download only content **you have the right to keep**; do not redistribute or use it commercially.
+The script obtains replay playback URLs through DingTalk's public interfaces. Those URLs carry a time-limited signature (about 10 days) which the script neither cracks nor modifies. DingTalk's Terms of Service may have specific provisions on automated access, and replay content may itself be copyrighted. Download only content **you have the right to keep**; do not redistribute or use it commercially.
 
 ---
 
