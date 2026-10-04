@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.5
+// @version      1.9.6
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -990,6 +990,69 @@
     const DL = { pause: false, cancel: false, running: false, purge: false };
     let partial = null;   // {key, datas} —— 中断时保留，purge 时清空
 
+    // ---------- IndexedDB 断点缓存：跨刷新/关页保留已下载切片 ----------
+    // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）。
+    // 内存 partial 是快路径，IndexedDB 是刷新后的兜底；隐私模式等不可用时
+    // 静默退化为仅内存缓存，不影响下载主流程。
+    const IDB_NAME = 'dlr-replay-cache', IDB_STORE = 'slices', IDB_SLOT = 'current';
+    let idbDb = null, idbBroken = false;
+    function idbOpen() {
+        if (idbBroken) return Promise.resolve(null);
+        if (idbDb) return Promise.resolve(idbDb);
+        return new Promise((res) => {
+            try {
+                const req = indexedDB.open(IDB_NAME, 1);
+                req.onupgradeneeded = () => {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+                };
+                req.onsuccess = () => { idbDb = req.result; res(idbDb); };
+                req.onerror = () => { idbBroken = true; res(null); };
+                req.onblocked = () => { idbBroken = true; res(null); };
+            } catch (e) { idbBroken = true; res(null); }
+        });
+    }
+    // 稀疏数组转稠密（未下载=null），否则结构化克隆会丢洞位
+    async function idbPutPartial(key, datas) {
+        const db = await idbOpen();
+        if (!db) return false;
+        const dense = Array.from({ length: datas.length }, (_, i) => datas[i] || null);
+        return new Promise((res) => {
+            try {
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).put({ key, at: Date.now(), datas: dense }, IDB_SLOT);
+                tx.oncomplete = () => res(true);
+                tx.onerror = () => res(false);
+                tx.onabort = () => res(false);
+            } catch (e) { res(false); }
+        });
+    }
+    async function idbGetPartial() {
+        const db = await idbOpen();
+        if (!db) return null;
+        return new Promise((res) => {
+            try {
+                const tx = db.transaction(IDB_STORE, 'readonly');
+                const rq = tx.objectStore(IDB_STORE).get(IDB_SLOT);
+                rq.onsuccess = () => res(rq.result || null);
+                rq.onerror = () => res(null);
+            } catch (e) { res(null); }
+        });
+    }
+    async function idbClearPartial() {
+        const db = await idbOpen();
+        if (!db) return false;
+        return new Promise((res) => {
+            try {
+                const tx = db.transaction(IDB_STORE, 'readwrite');
+                tx.objectStore(IDB_STORE).delete(IDB_SLOT);
+                tx.oncomplete = () => res(true);
+                tx.onerror = () => res(false);
+                tx.onabort = () => res(false);
+            } catch (e) { res(false); }
+        });
+    }
+
     // ---------- 主流程 ----------
     // ---------- 进度条 ----------
     function progressReset() {
@@ -1247,6 +1310,23 @@
                 }
                 if (resumed) appendLog('   ♻ 命中断点缓存，已恢复 ' + resumed + '/' + segs.length + ' 个切片');
             }
+            // 内存没命中 → 查 IndexedDB（跨刷新/关页后仍在）
+            if (!resumed) {
+                try {
+                    const saved = await idbGetPartial();
+                    if (saved && saved.key === dlKey &&
+                        saved.datas && saved.datas.length === segs.length) {
+                        for (let i = 0; i < segs.length; i++) {
+                            if (saved.datas[i]) { datas[i] = saved.datas[i]; resumed++; }
+                        }
+                        if (resumed) {
+                            partial = { key: dlKey, datas: datas.slice() };
+                            appendLog('   ♻ 命中跨会话断点缓存（IndexedDB），已恢复 ' +
+                                resumed + '/' + segs.length + ' 个切片');
+                        }
+                    }
+                } catch (e) { /* IDB 不可用则静默走全新下载 */ }
+            }
             const failures = [];   // {index, url, reason}
             let cursor = 0, done = resumed;
             const keyCache = new Map();
@@ -1314,11 +1394,16 @@
                 const gotCount = datas.filter(Boolean).length;
                 if (DL.purge) {
                     partial = null;
+                    try { await idbClearPartial(); } catch (e) { }
                     setStatus('🗑 已删除全部下载缓存（' + gotCount + ' 片已放弃），点下载将重新开始。');
                 } else {
                     partial = { key: dlKey, datas: datas.slice() };
+                    // 落盘 IndexedDB：刷新/关页后仍可断点续传
+                    let persisted = false;
+                    try { persisted = await idbPutPartial(dlKey, datas); } catch (e) { }
                     setStatus('⏹ 已中断：已下载 ' + done + '/' + segs.length +
-                        '（已缓存，点「下载本页回放」断点续传）');
+                        (persisted ? '（已缓存到本地，刷新后仍可断点续传）'
+                                   : '（已缓存，点「下载本页回放」断点续传）'));
                 }
                 progressDone(false);
                 return;
@@ -1337,6 +1422,7 @@
                 throw new Error(failures.length + '/' + segs.length + ' 切片失败（#' + first.index + ' ' + first.reason + '）。建议：' + advice);
             }
             partial = null;   // 全部下载成功，断点缓存失效
+            try { await idbClearPartial(); } catch (e) { }
 
             appendLog('⑤ 拼接 ...');
             progressSet(P.mux, '拼接');
@@ -1745,6 +1831,7 @@
                 setStatus('🗑 正在清空全部已下载切片…');
             } else {
                 partial = null;
+                idbClearPartial().catch(() => {});   // 非 async 回调，fire-and-forget
                 setStatus('🗑 下载缓存已清空，下次下载将从头开始');
             }
         });
