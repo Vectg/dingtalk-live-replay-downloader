@@ -11,7 +11,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.9.7）
+## 功能（v1.9.8）
 
 **核心**
 
@@ -24,6 +24,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **进度动画**：进度条 + 状态栏完整显示（不裁字，可换行），实时显示当前阶段与 `n/N`。
 - **体积预估（v1.9.7）**：下载前用 `Range: bytes=0-0` 只拉首片 1 字节读 `Content-Range` 得单片总大小，`单片 × 片数` 得出总大小（不额外下载整片），解析阶段日志显示 `预计体积: 约 340 MB（单片 5.8 MB × 60 片）`；下载中进度条追加 `已下/预计` 字节数。探测失败时静默跳过，不影响下载。
 - **完整性校验（v1.9.7）**：全部切片下载后逐片校验——数量齐全、非空、TS 同步字节 188 周期对齐（在首 188 字节内找对齐点，兼容带 ID3/填充前缀的合法切片；HTML 错误页与截断数据会被识破）。通过则日志 `✅ 完整性校验通过：60/60 片 · 341.2 MB`；发现异常则**只把问题片置空、好片保留为断点缓存**，报出具体片号，点下载只补异常片，不用重下整个回放。
+- **链接解析修复（v1.9.8）**：粘贴不带域名的裸查询串（`?roomId=…&liveUuid=…`）时不再报「链接缺少 roomId/liveUuid」——旧代码在回退拼接时会把开头的 `?` 再拼一个，导致参数名带上多余问号而取不到。
 
 **性能与预取**
 
@@ -115,6 +116,22 @@ Windows 下中文文件名/引号易出问题，建议用 Python `subprocess.run
 - 解析 m3u8 得到带各自签名的切片 URL，并发下载后按顺序字节拼接。
 - `getOpenLiveInfo`（V1）对匿名用户 `playbackUrl` 是**空字符串**，必须用 V2；`sliceCount`/`sliceDuration` 是雪碧图参数、**不是**切片数，以 m3u8 实际条目为准。
 - **MP4 duration 修补**：`mux.js` 面向 MSE 流式播放，`moov` 里 `mvhd/tkhd/mdhd` 的 duration 留为 `0xFFFFFFFF`。脚本遍历 `moof/traf`，用 `tfdt + Σtrun.sample_duration` 算出每轨真实结束时间，换算 timescale 后写回；媒体数据本身不变、文件大小不变。
+
+---
+
+## 开发
+
+```bash
+git clone https://github.com/Vectg/dingtalk-live-replay-downloader.git
+cd dingtalk-live-replay-downloader
+node test/run.js
+```
+
+测试不从副本跑：`test/extract.js` 直接从**已发布的 `钉钉直播回放下载.user.js`** 里按函数名抽取源码执行，所以测的就是用户真正装到 Tampermonkey 里的那份代码，不会出现「测试通过但发布出去是另一份实现」。抽取按花括号配平并跳过字符串/正则/注释，`test/run.js` 开头还会自检抽取结果是否完整可编译。
+
+覆盖范围：m3u8 解析（多码率选档 / AES-128 / `EXT-X-MAP` / `EXT-X-BYTERANGE` / 时间轴累加）、MP4 `fixMp4Duration`（哨兵 duration 修补，含 moof 缺失与已正常两种边界）、H.264 SPS 分辨率解析（Baseline / High 扩展路径 / `frame_cropping` / MBAFF / 上下限边界）、截取区间对齐、体积与时间格式化、版本比较、URL 解析。
+
+GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、`test/run.js` 单元测试，以及 `test/version_guard.sh` —— 最后一项会在「改了 `.user.js` 却没 bump `@version`」时让 CI 失败（这个坑在 1.6.8 踩过一次：修复发布了，但版本号没涨，Tampermonkey 用户根本收不到更新）。
 
 ---
 
