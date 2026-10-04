@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.10
+// @version      1.9.11
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、完成/失败通知与提示音、失败切片单独重试、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -76,6 +76,124 @@
         pushHistory(line);
         // 默认只保留最新一行（展开历史时 pushHistory 内部会渲染全量）
         if (!statusEl.classList.contains('hist')) statusEl.textContent = line;
+    }
+
+    // ---------- 诊断信息收集（供「导出诊断日志」用） ----------
+    // 目标：用户点一下就能把完整现场导成 .txt 发给开发者，省掉来回截图/猜测。
+    // 只收集本地状态，不含任何页面内容、不含 m3u8 签名串（签名是一次性的、
+    // 贴出来也复现不了，反而容易被当成泄露凭证）。
+    const DIAG = {
+        errors: [],        // 未捕获异常 / GM 请求异常
+        runs: [],          // 每次下载的结论
+        startedAt: new Date(),
+    };
+    // 未捕获异常：真机排查最关键的一类信号，页面自己的 try/catch 抓不到的那些
+    window.addEventListener('error', (e) => {
+        DIAG.errors.push({
+            t: new Date().toISOString(),
+            msg: String((e && e.message) || e),
+            src: String((e && e.filename) || '').slice(-120),
+            line: (e && e.lineno) || 0,
+        });
+        if (DIAG.errors.length > 50) DIAG.errors.shift();
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+        const r = (e && e.reason) || {};
+        DIAG.errors.push({
+            t: new Date().toISOString(),
+            msg: '未处理的 Promise 拒绝: ' + String(r && r.message ? r.message : r).slice(0, 300),
+            src: '', line: 0,
+        });
+        if (DIAG.errors.length > 50) DIAG.errors.shift();
+    });
+    // 记一次下载结论。err 非空即失败。
+    function diagRun(ok, summary, detail) {
+        DIAG.runs.push({
+            t: new Date().toISOString(),
+            ok: !!ok,
+            summary: String(summary || '').slice(0, 300),
+            detail: detail ? String(detail).slice(0, 600) : '',
+        });
+        if (DIAG.runs.length > 20) DIAG.runs.shift();
+    }
+
+    // 把播放地址里的签名抹掉：诊断文本可能被贴到公开 issue 里
+    function redactUrl(u) {
+        return String(u || '').replace(/([?&](auth_key|authKey|token|sign|signature)=)[^&]*/gi, '$1<已抹除>');
+    }
+
+    function buildDiagReport() {
+        const L = [];
+        const push = (k, v) => L.push(k.padEnd(14, ' ') + ': ' + v);
+        push('脚本版本', VERSION);
+        push('生成时间', new Date().toLocaleString('zh-CN'));
+        push('页面地址', redactUrl(location.href));
+        push('浏览器', navigator.userAgent);
+        push('脚本启动', DIAG.startedAt.toLocaleString('zh-CN'));
+        push('硬件并发', String(navigator.hardwareConcurrency || '未知') +
+            '（自动识别线程数 ' + Math.max(4, Math.min(16, (navigator.hardwareConcurrency || 4) * 2)) + '）');
+        L.push('');
+
+        // —— 下载历史 ——
+        L.push('【下载记录】共 ' + DIAG.runs.length + ' 次');
+        if (!DIAG.runs.length) L.push('  （本次会话没有点过下载）');
+        DIAG.runs.forEach((r, i) => {
+            L.push('  ' + (i + 1) + '. ' + r.t.replace('T', ' ').slice(0, 19) +
+                '  ' + (r.ok ? '成功' : '失败') + '  ' + r.summary);
+            if (r.detail) L.push('     ' + r.detail);
+        });
+        L.push('');
+
+        // —— 解析结果 ——
+        const pc = prepCache && prepCache.parsed;
+        L.push('【解析结果】');
+        if (!pc) {
+            L.push('  （尚未解析成功——这本身就是关键信息：多为签名过期或接口被拦）');
+        } else {
+            push('  切片数', String(pc.segments.length));
+            push('  总时长', fmtTime(pc.totalDur || 0));
+            push('  加密', pc.encrypted ? '是（AES-128）' : '否');
+            push('  fMP4', pc.fmp4 ? '是' : '否');
+            if (pc.initSegment) push('  初始化段', redactUrl(pc.initSegment.url));
+            if (pc.variants && pc.variants.length) {
+                L.push('  多码率档位:');
+                pc.variants.forEach((v) => {
+                    L.push('    ' + (v.res || '未标注') + '  ' + v.bandwidth + ' bps');
+                });
+            }
+        }
+        L.push('');
+
+        // —— 缓存与设置 ——
+        L.push('【缓存与设置】');
+        const cached = partial && partial.datas ? partial.datas.filter(Boolean).length : 0;
+        push('  内存缓存', partial ? (cached + ' 片' + (partial.key ? '' : '（key 不匹配）')) : '无');
+        const failed = lastFailed ? lastFailed.length : 0;
+        push('  待重试', failed ? (failed + ' 片：#' + lastFailed.slice(0, 20).join(' #')) : '无');
+        const readChk = (id, key, def) => {
+            try { const v = GM_getValue(key); return v === undefined || v === null ? def : v; }
+            catch (e) { return def; }
+        };
+        push('  并发线程', String(readChk('dlr-thread', 'dlr_thread', '默认')));
+        push('  重试次数', String(readChk('dlr-retry', 'dlr_retry', '默认')));
+        push('  预取', readChk(null, 'dlr_prefetch', true) ? '开' : '关');
+        push('  通知', (readChk(null, 'dlr_notify_desktop', true) ? '开' : '关') + ' / 声音' +
+            (readChk(null, 'dlr_notify_sound', false) ? '开' : '关'));
+        L.push('');
+
+        // —— 未捕获异常 ——
+        L.push('【未捕获异常】共 ' + DIAG.errors.length + ' 条');
+        if (!DIAG.errors.length) L.push('  （无）');
+        DIAG.errors.forEach((e) => {
+            L.push('  ' + e.t.replace('T', ' ').slice(0, 19) + '  ' + e.msg);
+            if (e.src) L.push('     ' + e.src + ':' + e.line);
+        });
+        L.push('');
+        L.push('【面板日志】最近 ' + logHistory.length + ' 条');
+        logHistory.slice(-80).forEach((l) => L.push('  ' + l));
+        L.push('');
+        L.push('—— 报告结束 ——');
+        return L.join('\n');
     }
 
     function setStatus(msg, isErr) {
@@ -686,6 +804,53 @@
         return h ? h + ':' + p(m) + ':' + p(ss) : p(m) + ':' + p(ss);
     }
 
+    // ---------- 分辨率：自定义输入与常用档位 ----------
+    // 播放列表里的档位常常缺（单码率回放只有一个自动项），但用户仍可能想
+    // 「按更低的分辨率下」——于是允许手填 WxH。填了之后按「不超过原始分辨率、
+    // 尽量接近」的原则选最接近的档位；没有匹配就明确告知并回落自动。
+    const CUSTOM_RES = '__custom__';   // 下拉里的哨兵值
+    // 接受 1920x1080 / 1920X1080 / 1920×1080 / 空格 / 中文冒号
+    function parseResInput(v) {
+        // 归一化各种手打分隔符：中文/全角冒号（有人会打「1280：720」）、
+        // 乘号、大写 X、全角 x、空格与零宽字符 —— 统一成半角 x。
+        const t = String(v == null ? '' : v)
+            .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))  // 全角数字
+            .replace(/[×╳✕]/g, 'x')
+            .replace(/[：﹕]/g, 'x')
+            .replace(/[XxＸｘ]/g, 'x')
+            .replace(/[\s\u200b\u200c\u200d\ufeff]/g, '');
+        if (!t) throw new Error('分辨率为空，格式如 1280x720');
+        const m = /^(\d{2,5})x(\d{2,5})$/.exec(t);
+        if (!m) throw new Error('格式不对，应为 宽x高（如 1280x720），收到：' + v);
+        const w = parseInt(m[1], 10), h = parseInt(m[2], 10);
+        if (w < 16 || h < 16) throw new Error('宽高至少 16 像素，收到：' + w + 'x' + h);
+        // 上限对齐脚本里 parseSpsToDims 的校验，避免下拉里塞进必然失败的选项
+        if (w > 7680 || h > 4320) throw new Error('超出 7680x4320 上限，收到：' + w + 'x' + h);
+        return w + 'x' + h;
+    }
+    // 按面积比挑最接近目标且不超过原始分辨率的档位；都不够小则返回 null
+    function pickResVariant(variants, target, origW, origH) {
+        const want = target.split('x');
+        const tw = parseInt(want[0], 10), th = parseInt(want[1], 10);
+        const targetArea = tw * th;
+        let best = null, bestScore = Infinity;
+        for (const v of variants || []) {
+            if (!v.res) continue;
+            const p = v.res.split('x');
+            const w = parseInt(p[0], 10), h = parseInt(p[1], 10);
+            if (!(w > 0 && h > 0)) continue;
+            // 档位比原始还大 → 不是「更低的分辨率」，跳过
+            if (origW && origH && (w > origW || h > origH)) continue;
+            const area = w * h;
+            // 惩罚：宁可略大于目标也不要远小于目标（画质损失更明显）
+            const score = area >= targetArea
+                ? (area - targetArea)
+                : (targetArea - area) * 4;
+            if (score < bestScore) { bestScore = score; best = v; }
+        }
+        return best;
+    }
+
     // ---------- AES-128 分片解密 ----------
     function hexToBytes(v) {
         const hex = String(v || '').replace(/^0x/i, '').replace(/\s/g, '');
@@ -978,6 +1143,9 @@
             <button id="dlr-retry" title="只重新下载上次失败的切片，其余用缓存">♻ 只重试失败切片</button>
             <span id="dlr-retry-info" class="tip" style="flex:1"></span>
         </div>
+        <div class="row">
+            <button id="dlr-diag" title="把版本、解析结果、失败片号、未捕获异常等导出为 .txt，便于排查问题">📋 导出诊断日志</button>
+        </div>
         <div id="dlr-preview"></div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
@@ -1000,6 +1168,14 @@
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-desktop">完成/失败时通知我</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败时提示音</label></div>
+                <div class="row">
+                    <label>更新源</label>
+                    <select id="dlr-updsrc" style="flex:1">
+                        <option value="gitee">Gitee（国内推荐，默认）</option>
+                        <option value="github">GitHub</option>
+                        <option value="auto">自动（先 GitHub，不通再 Gitee）</option>
+                    </select>
+                </div>
                 <div class="tip">预取播放地址与切片索引，打开页面后无需等待即可直接下载。</div>
             </div></div>
         </div>
@@ -1640,10 +1816,13 @@
             }
             setStatus('✅ 完成：' + outName + '（已存入浏览器默认下载文件夹）');
             progressDone(true);
+            diagRun(true, outName + ' · ' + fmtBytes(blob.size) + ' · ' + segs.length + ' 片');
             notify('钉钉回放下载完成', outName + ' · ' + fmtBytes(blob.size), true);
         } catch (err) {
             setStatus('❌ 失败：' + err.message, true);
             progressDone(false);
+            diagRun(false, String(err.message || '').split('\n')[0],
+                lastFailed && lastFailed.length ? ('待重试片号: #' + lastFailed.slice(0, 30).join(' #')) : '');
             // 失败通知正文压到一行：系统通知窗口窄，整段错误详情留给面板历史
             const brief = String(err.message || '').split('\n')[0];
             notify('钉钉回放下载失败', brief.length > 120 ? brief.slice(0, 120) + '…' : brief, false);
@@ -1794,40 +1973,112 @@
 
         // 分辨率：默认自动（原始=最高带宽）；预取后回填各档位，切换即重新预取
         const resSel = $('dlr-res');
+        // 上一次的有效选择：用户点「自定义…」后取消/输错时要回到这里，而不是留下哨兵值
+        let lastValidRes = '';
         try { const rv = GM_getValue('dlr_res'); if (rv) resSel.value = rv; } catch (e) { }
+        // 常用档位：按宽度降序，实际只显示「不超过原始分辨率」的那些。
+        // 播放列表里常常没有对应档位，所以这里只是快捷入口——最终仍由
+        // pickResVariant 挑最接近的真实档位。
+        const COMMON_RES = [
+            { w: 3840, h: 2160 }, { w: 2560, h: 1440 }, { w: 1920, h: 1080 },
+            { w: 1600, h: 900 }, { w: 1280, h: 720 }, { w: 960, h: 540 },
+            { w: 854, h: 480 }, { w: 640, h: 360 }, { w: 480, h: 270 },
+        ];
         const fillResOptions = (variants, resInfo) => {
             if (!resSel) return;
-            // 自动项标注探测到的原始分辨率
-            const auto0 = resSel.options[0];
-            if (auto0) {
-                auto0.textContent = resInfo
-                    ? '自动（原始分辨率 ' + resInfo.width + '×' + resInfo.height + '）'
-                    : '自动（原始分辨率）';
-            }
-            if (!variants || variants.length < 2) return;
+            const ow = resInfo ? resInfo.width : 0, oh = resInfo ? resInfo.height : 0;
             const cur = resSel.value;
-            resSel.innerHTML = '<option value="">自动（原始分辨率）</option>';
-            variants.forEach((v) => {
-                if (!v.res) return;
+            const autoText = resInfo
+                ? '自动（原始分辨率 ' + resInfo.width + '×' + resInfo.height + '）'
+                : '自动（原始分辨率）';
+            resSel.innerHTML = '';
+            const addOpt = (val, text) => {
                 const o = document.createElement('option');
-                o.value = v.res;
-                o.textContent = v.res + ' · ' + Math.round(v.bandwidth / 1000) + ' kbps';
+                o.value = val; o.textContent = text;
                 resSel.appendChild(o);
-            });
-            resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
             };
+            addOpt('', autoText);
+
+            // 播放列表声明的档位（最准确，带码率）
+            const declared = (variants || []).filter((v) => v.res);
+            declared.forEach((v) => {
+                addOpt(v.res, v.res + ' · ' + Math.round(v.bandwidth / 1000) + ' kbps');
+            });
+            // 常用档位里还没出现过的（≤ 原始分辨率）也列出来，方便一键降档
+            COMMON_RES.forEach((c) => {
+                const key = c.w + 'x' + c.h;
+                if (declared.some((v) => v.res === key)) return;
+                if (ow && oh && (c.w > ow || c.h > oh)) return;   // 比原始还大，不列
+                if (!ow && !oh) return;                            // 未知原始分辨率时不猜
+                addOpt(key, key + (declared.length ? '（按最接近档位）' : ''));
+            });
+            // 自定义入口永远在最后
+            addOpt(CUSTOM_RES, '自定义…（手动输入宽×高）');
+            resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
+        };
         resSel.addEventListener('change', () => {
+            // 「自定义…」不直接用：弹输入框，校验后换成真实档位值存回去。
+            // 用 prompt 而不是自造弹窗：少一份焦点/无障碍处理，浏览器原生足够。
+            if (resSel.value === CUSTOM_RES) {
+                const cur = (prepCache && prepCache.resInfo)
+                    ? (prepCache.resInfo.width + 'x' + prepCache.resInfo.height) : '';
+                let typed = '';
+                try {
+                    typed = window.prompt(
+                        '输入想要的分辨率（宽x高），只列出不超过原始分辨率的档位：\n' +
+                        '例如 1280x720', cur);
+                } catch (e) { typed = null; }
+                if (!typed) {          // 取消 → 回到之前的有效值
+                    resSel.value = lastValidRes;
+                    return;
+                }
+                let normalized;
+                try {
+                    normalized = parseResInput(typed);
+                } catch (e) {
+                    setStatus('❌ ' + e.message, true);
+                    resSel.value = lastValidRes;
+                    return;
+                }
+                // 解析成播放列表里真实存在的档位；没有则如实说明并回落自动
+                const hit = pickResVariant(prepCache && prepCache.parsed && prepCache.parsed.variants,
+                    normalized,
+                    prepCache && prepCache.resInfo ? prepCache.resInfo.width : 0,
+                    prepCache && prepCache.resInfo ? prepCache.resInfo.height : 0);
+                if (!hit) {
+                    setStatus('⚠ 没有不超过原始分辨率且接近 ' + normalized + ' 的档位，已回到「自动」', true);
+                    resSel.value = '';
+                    GM_setValue('dlr_res', '');
+                    return;
+                }
+                resSel.value = hit.res;
+                // 播放列表里没有正好等于输入值的档位时必须说清楚——
+                // 否则用户以为下了 999x999，其实是 1280x720。
+                if (hit.res !== normalized) {
+                    setStatus('ℹ 播放列表里没有 ' + normalized + '，实际使用最接近的档位 ' +
+                        hit.res + '（' + Math.round(hit.bandwidth / 1000) + ' kbps）');
+                } else {
+                    setStatus('ℹ 已选择 ' + hit.res +
+                        '（' + Math.round(hit.bandwidth / 1000) + ' kbps）');
+                }
+            }
+            lastValidRes = resSel.value;
             try { GM_setValue('dlr_res', resSel.value); } catch (e) { }
             // 切换分辨率 → 缓存键不同，直接重新预取，下载时秒用
             let p = null;
             try { p = parseUrl(($('dlr-url').value || '').trim() || location.href); } catch (e) { }
             if (p && prefetch.checked) {
                 setStatus('⏳ 已切换分辨率，重新预取…');
-                prep(p.roomId, p.liveUuid, resSel.value).then(() => {
+                // 自定义档位的「实际用了哪一档」提示要留在历史里，
+                // 否则会被下面这条「就绪」覆盖掉，用户就不知道自己填的值被换掉了
+                const picked = resSel.value;
+                prep(p.roomId, p.liveUuid, picked).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
                     if (fillResOptions) fillResOptions(prepCache.parsed.variants, prepCache.resInfo);
+                    const res = prepCache.parsed.segments.length + ' 个切片';
+                    const pickedLabel = picked ? '，' + picked : '';
                     setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
-                        ' · ' + prepCache.parsed.segments.length + ' 个切片，可开始下载');
+                        ' · ' + res + pickedLabel + '，可开始下载');
                 }).catch((e) => setStatus('⚠ 预取失败：' + e.message, true));
             }
         });
@@ -1862,6 +2113,35 @@
         frost.addEventListener('change', applyFrost);
         applyFrost();
         const autoUpd = bindChk('dlr-autoupdate', 'dlr_autoupdate', true);   // 自动检查更新：默认开启
+        // 更新源：默认 Gitee（国内可达）。改了立刻重查一次，别让用户等下次自动检查。
+        const updSrcSel = $('dlr-updsrc');
+        if (updSrcSel) {
+            try {
+                const saved = GM_getValue('dlr_updsrc');
+                updSrcSel.value = (saved === 'github' || saved === 'auto') ? saved : 'gitee';
+            } catch (e) { updSrcSel.value = 'gitee'; }
+            updSrcSel.addEventListener('change', () => {
+                try { GM_setValue('dlr_updsrc', updSrcSel.value); } catch (e) { }
+                const label = updSrcSel.options[updSrcSel.selectedIndex].textContent.split('（')[0];
+                setStatus('ℹ 更新源已切换为 ' + label + '，正在重新检查…');
+                // 立即按新源重查一次：换源后继续拿旧源的结论没有意义。
+                // remoteVersion / UPD 在下方定义，这里用 setTimeout 延到本轮之后。
+                setTimeout(async () => {
+                    try {
+                        const v = await remoteVersion();
+                        if (compareVersions(v, VERSION) > 0) {
+                            showFound(v);
+                            setStatus('🔄 发现新版 ' + v + '（当前 ' + VERSION + '），点击「发现新版」跳转下载页');
+                        } else {
+                            setStatus('✅ 已是最新版 v' + VERSION + '（更新源：' + label + '）');
+                            setUpd('已是最新');
+                        }
+                    } catch (e) {
+                        setStatus('⚠ 新更新源不可达：' + e.message, true);
+                    }
+                }, 0);
+            });
+        }
 
         // 版本号回填 + 检查更新（v1.9.4：灰色小字、自动检查默认开、发现新版只提示不跳转）
         $('dlr-ver').textContent = VERSION;
@@ -1880,18 +2160,38 @@
                 ontimeout: () => rej(new Error('超时')),
             });
         });
-        const remoteVersion = async () => {
-            let txt;
+        // 更新源：默认 Gitee。raw.githubusercontent.com 在国内时通时不通，
+        // 而 Gitee 镜像通常稳定——让用户自己选比猜更靠谱。
+        //   gitee(默认) → 只查 Gitee，快且稳
+        //   github      → 只查 GitHub
+        //   auto        → 先 GitHub，不通回落 Gitee（旧行为）
+        const UPD_ORDER = {
+            gitee: [UPDATE_URL_FALLBACK, UPDATE_URL],
+            github: [UPDATE_URL, UPDATE_URL_FALLBACK],
+            auto: [UPDATE_URL, UPDATE_URL_FALLBACK],
+        };
+        const updSource = () => {
             try {
-                txt = await fetchVer(UPDATE_URL);
-            } catch (e1) {
-                pushHistory('GitHub 不通，回落 Gitee');
-                txt = await fetchVer(UPDATE_URL_FALLBACK);
+                const v = GM_getValue('dlr_updsrc');
+                return UPD_ORDER[v] ? v : 'gitee';   // 默认 Gitee
+            } catch (e) { return 'gitee'; }
+        };
+        // 跳转的下载页也跟着选：gitee 用镜像地址，github 用原地址
+        const updatePageUrl = () => (updSource() === 'github' ? UPDATE_URL : UPDATE_URL_FALLBACK);
+        const remoteVersion = async () => {
+            const order = UPD_ORDER[updSource()];
+            let txt, lastErr = null;
+            for (const url of order) {
+                try {
+                    txt = await fetchVer(url);
+                    break;
+                } catch (e) { lastErr = e; }
             }
+            if (txt === undefined) throw lastErr || new Error('所有更新源都不可达');
             const m = txt.match(/@version\s+(\S+)/);
             if (!m) throw new Error('无法解析远程版本号');
             return m[1];
-            };
+        };
         const quietLog = (msg) => {
             const d = new Date(), p = (n) => String(n).padStart(2, '0');
             pushHistory(p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '  ' + msg);
@@ -1906,7 +2206,7 @@
             if (UPD.busy) return;
             if (UPD.found) {
                 setStatus('🔄 已打开更新页 v' + UPD.found + '（当前 ' + VERSION + '），在油猴里确认更新即可');
-                window.open(UPDATE_URL, '_blank');
+                window.open(updatePageUrl(), '_blank');
                 return;
             }
             clearTimeout(UPD.timer);
@@ -2058,6 +2358,29 @@
             $('dlr-go').click();     // 走同一条下载路径，partial 自动跳过好片
         });
         renderRetryRow();
+
+        // 导出诊断日志：把收集到的现场写成 .txt 存进浏览器下载目录。
+        // 用户把它发给我们就能复现问题，比截图和口头描述有效得多。
+        const diagBtn = $('dlr-diag');
+        diagBtn && diagBtn.addEventListener('click', async () => {
+            const oldText = diagBtn.textContent;
+            diagBtn.disabled = true;
+            diagBtn.textContent = '⏳ 生成中...';
+            try {
+                const text = buildDiagReport();
+                const filename = '钉钉回放下载-诊断-' + stamp() + '.txt';
+                // 前置 BOM：Windows 记事本不认无 BOM 的 UTF-8，中文会变乱码
+                const blob = new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' });
+                await downloadBlob(blob, filename);
+                appendLog('📋 诊断日志已导出：' + filename);
+                setStatus('📋 已导出诊断日志 ' + filename);
+            } catch (e) {
+                setStatus('❌ 导出诊断日志失败：' + e.message, true);
+            } finally {
+                diagBtn.disabled = false;
+                diagBtn.textContent = oldText;
+            }
+        });
 
         $('dlr-go').addEventListener('click', () => {
             // 在用户手势内预热 AudioContext：否则下载完成时页面若已无交互，

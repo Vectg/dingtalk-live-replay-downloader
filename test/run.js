@@ -684,6 +684,92 @@ section('失败片清单推导');
         '全片命中缓存 → 不发起任何请求');
     eq(await simulateRun([null, null, null, null]), [1, 2, 3, 4], '全片缺失 → 全部抓取');
 }
+
+// ---------------------------------------------------------------- 诊断报告
+// redactUrl 是安全关键项：诊断文本用户会直接贴到公开 issue 里，
+// 不能把播放地址里的签名带出去。
+section('诊断报告 redactUrl（签名抹除）');
+{
+    const { redactUrl } = loadFns(['redactUrl']);
+
+    eq(redactUrl('https://cdn/x.m3u8?auth_key=abcdef123&t=99'),
+        'https://cdn/x.m3u8?auth_key=<已抹除>&t=99', 'auth_key 被抹除');
+    eq(redactUrl('https://cdn/x.m3u8?authKey=SECRET&x=1'),
+        'https://cdn/x.m3u8?authKey=<已抹除>&x=1', '驼峰 authKey 也抹除');
+    eq(redactUrl('https://cdn/x.ts?token=SECRET'),
+        'https://cdn/x.ts?token=<已抹除>', 'token 抹除');
+    eq(redactUrl('https://cdn/x.ts?sign=SECRET&expires=1'),
+        'https://cdn/x.ts?sign=<已抹除>&expires=1', 'sign 抹除但保留其他参数');
+    eq(redactUrl('https://cdn/x.ts?signature=SECRET'),
+        'https://cdn/x.ts?signature=<已抹除>', 'signature 抹除');
+    eq(redactUrl('https://cdn/x.ts?a=1'), 'https://cdn/x.ts?a=1', '无签名参数 → 原样');
+    eq(redactUrl(''), '', '空串');
+    eq(redactUrl(undefined), '', 'undefined → 空串');
+    // 大小写不敏感
+    eq(redactUrl('https://cdn/x.ts?AUTH_KEY=SECRET'),
+        'https://cdn/x.ts?AUTH_KEY=<已抹除>', '大写 AUTH_KEY 也抹除');
+    // 值里含 & 时不能截断后面的参数
+    const tricky = redactUrl('https://cdn/x.ts?auth_key=a%26b&keep=1');
+    ok(tricky.includes('keep=1'), '签名值含转义 & 时不吞掉后续参数', tricky);
+    ok(!tricky.includes('a%26b'), '签名原值不泄露', tricky);
+    // 多个签名参数
+    const multi = redactUrl('https://cdn/x.ts?sign=A&token=B&sign=C&keep=9');
+    ok(!multi.includes('A&') && !multi.includes('=B'), '同名的多个签名参数都抹除', multi);
+    ok(multi.includes('keep=9'), '非签名参数保留', multi);
+    eq(redactUrl(null), '', 'null → 空串');
+}
+
+// ---------------------------------------------------------------- 自定义分辨率
+section('自定义分辨率');
+{
+    const { parseResInput, pickResVariant } = loadFns(['parseResInput', 'pickResVariant']);
+
+    // --- 输入解析 ---
+    eq(parseResInput('1280x720'), '1280x720', '标准写法');
+    eq(parseResInput('1920X1080'), '1920x1080', '大写 X');
+    eq(parseResInput('1920×1080'), '1920x1080', '乘号 ×');
+    eq(parseResInput('1920X1080'), '1920x1080', 'Unicode ✕');
+    eq(parseResInput(' 1280 x 720 '), '1280x720', '含空格');
+    eq(parseResInput('1280：720'), '1280x720', '中文冒号');
+    eq(parseResInput('０１２８０ｘ７２０'), '1280x720', '全角数字与全角 x');
+    throws(() => parseResInput(''), '空 → 报错');
+    throws(() => parseResInput('abc'), '非数字 → 报错');
+    throws(() => parseResInput('1280'), '缺高度 → 报错');
+    throws(() => parseResInput('8x8'), '低于 16 下限 → 报错');
+    throws(() => parseResInput('99999x100'), '超宽上限 → 报错');
+    throws(() => parseResInput('100x99999'), '超高上限 → 报错');
+    throws(() => parseResInput('1280x720x60'), '三段 → 报错');
+
+    // --- 档位匹配 ---
+    const variants = [
+        { res: '1920x1080', bandwidth: 3000000 },
+        { res: '1280x720', bandwidth: 1500000 },
+        { res: '960x540', bandwidth: 800000 },
+        { res: '640x360', bandwidth: 400000 },
+        { res: '', bandwidth: 200000 },          // 未标注分辨率，应被跳过
+    ];
+    const pick = (target, ow, oh) => {
+        const v = pickResVariant(variants, target, ow, oh);
+        return v ? v.res : null;
+    };
+    eq(pick('1280x720', 1920, 1080), '1280x720', '精确命中');
+    eq(pick('1366x768', 1920, 1080), '1280x720', '略大目标 → 取不超过目标的最大档');
+    eq(pick('1100x619', 1920, 1080), '1280x720', '目标偏小但惩罚后仍取更接近的大档');
+    eq(pick('900x506', 1920, 1080), '960x540', '小目标 → 取略小的档');
+    eq(pick('320x180', 1920, 1080), '640x360', '低于所有档位 → 取最小档');
+    // 原始分辨率以内的档位才允许出现在下拉里；比原始还大的要跳过
+    eq(pick('1280x720', 1280, 720), '1280x720', '原始=目标 → 命中原档');
+    eq(pick('1920x1080', 1280, 720), '1280x720', '目标高于原始 → 回落到原始档');
+    eq(pick('1280x720', 0, 0), '1280x720', '未知原始分辨率 → 不做上限过滤');
+    eq(pickResVariant([], '1280x720', 1920, 1080), null, '无档位 → null');
+    eq(pickResVariant(null, '1280x720', 1920, 1080), null, 'variants 为 null → null');
+    // 只有未标注分辨率的档位 → 无从匹配
+    eq(pickResVariant([{ res: '', bandwidth: 1 }], '1280x720', 1920, 1080), null,
+        '全部档位未标分辨率 → null');
+    // 尺寸非法的档位要被跳过，不能让 NaN 污染比较
+    eq(pickResVariant([{ res: '0x0', bandwidth: 9 }, { res: '640x360', bandwidth: 4 }],
+        '1280x720', 1920, 1080).res, '640x360', '非法尺寸档位被跳过');
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
