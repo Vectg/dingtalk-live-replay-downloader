@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.9
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      1.9.10
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、完成/失败通知与提示音、失败切片单独重试、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -974,6 +974,10 @@
             <button id="dlr-cancel" title="中断本次下载（已下载的可保留）">⏹ 中断</button>
             <button id="dlr-purge" title="删除全部已下载的切片缓存">🗑 删除已下载</button>
         </div>
+        <div id="dlr-retry-row" class="row" style="display:none">
+            <button id="dlr-retry" title="只重新下载上次失败的切片，其余用缓存">♻ 只重试失败切片</button>
+            <span id="dlr-retry-info" class="tip" style="flex:1"></span>
+        </div>
         <div id="dlr-preview"></div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
@@ -1038,7 +1042,8 @@
         holder.appendChild(v);
         box.appendChild(holder);
 
-        // 控制行：倍速 + 音量
+        // 控制行：只留倍速。音量不单独做滑块——原生 controls 里已经有音量按钮，
+        // 再加一个只是重复操作，还占掉面板宽度。
         const ctl = document.createElement('div');
         ctl.className = 'pc';
         const sp = document.createElement('select');
@@ -1051,18 +1056,11 @@
             sp.appendChild(o);
         });
         sp.addEventListener('change', () => { v.playbackRate = parseFloat(sp.value); });
-        const vl = document.createElement('input');
-        vl.type = 'range';
-        vl.min = '0'; vl.max = '1'; vl.step = '0.05'; vl.value = '1';
-        vl.title = '音量';
-        vl.style.width = '84px';
-        vl.addEventListener('input', () => { v.volume = parseFloat(vl.value); });
         const cap = document.createElement('div');
         cap.className = 'pn';
         cap.textContent = '预览：' + name;
         ctl.appendChild(cap);
         ctl.appendChild(sp);
-        ctl.appendChild(vl);
         box.appendChild(ctl);
 
         close.addEventListener('click', () => {
@@ -1075,8 +1073,13 @@
 
     // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
     // DL 跨 run 存活；partial 保存已下载切片实现「中断再下 = 断点续传」。
+    // partial.failed 记录上次失败的片号与原因，用于「只重试失败切片」的提示文案
+    // 与「换更低并发重试」建议——好片永远留在 datas 里，不会被重复下载。
     const DL = { pause: false, cancel: false, running: false, purge: false };
     let partial = null;   // {key, datas} —— 中断时保留，purge 时清空
+    // 上次失败的片号（1-based）。为 null 表示没有待重试的失败片，按钮隐藏。
+    // 成功/换 key/删除缓存时清空——避免拿上一轮的数字误导用户。
+    let lastFailed = null;
 
     // ---------- IndexedDB 断点缓存：跨刷新/关页保留已下载切片 ----------
     // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）。
@@ -1421,7 +1424,13 @@
                 for (let i = 0; i < segs.length; i++) {
                     if (partial.datas[i]) { datas[i] = partial.datas[i]; resumed++; resumedBytes += datas[i].length; }
                 }
-                if (resumed) appendLog('   ♻ 命中断点缓存，已恢复 ' + resumed + '/' + segs.length + ' 个切片');
+                if (resumed) {
+                    appendLog('   ♻ 命中断点缓存，已恢复 ' + resumed + '/' + segs.length + ' 个切片');
+                    // 上次留下的失败片号（若有）继续沿用，让「只重试」按钮跨轮次保持可见
+                    const stillMissing = [];
+                    for (let i = 0; i < segs.length; i++) if (!datas[i]) stillMissing.push(i + 1);
+                    lastFailed = stillMissing.length ? stillMissing : null;
+                }
             }
             // 内存没命中 → 查 IndexedDB（跨刷新/关页后仍在）
             if (!resumed) {
@@ -1434,6 +1443,10 @@
                         }
                         if (resumed) {
                             partial = { key: dlKey, datas: datas.slice() };
+                            // IDB 里没存 failed 清单，但「哪些片缺失」可以自己算出来
+                            const missing = [];
+                            for (let i = 0; i < segs.length; i++) if (!datas[i]) missing.push(i + 1);
+                            lastFailed = missing.length ? missing : null;
                             appendLog('   ♻ 命中跨会话断点缓存（IndexedDB），已恢复 ' +
                                 resumed + '/' + segs.length + ' 个切片');
                         }
@@ -1510,6 +1523,7 @@
                 const gotCount = datas.filter(Boolean).length;
                 if (DL.purge) {
                     partial = null;
+                    lastFailed = null;
                     try { await idbClearPartial(); } catch (e) { }
                     setStatus('🗑 已删除全部下载缓存（' + gotCount + ' 片已放弃），点下载将重新开始。');
                 } else {
@@ -1534,7 +1548,13 @@
                 if (allAuth) advice = '多为 auth_key 签名过期（约 10 天有效），刷新页面重新获取链接';
                 else if (all404) advice = '切片已过期或被清理，回放可能已失效';
                 else advice = '可降低并发线程数后重试，或点「检查更新」确认脚本为最新版';
+                // 好片留存为断点缓存 + 记下失败片号：下次点下载只补这几片
+                partial = { key: dlKey, datas: datas.slice(), failed: failures.slice() };
+                lastFailed = failures.map((f) => f.index);
+                try { await idbPutPartial(dlKey, datas); } catch (e) { }
                 appendLog('❌ ' + failures.length + '/' + segs.length + ' 切片失败：#' + first.index + ' ' + first.reason);
+                appendLog('   好片 ' + (segs.length - failures.length) + ' 片已保留为断点缓存，' +
+                    '点「下载本页回放」只重试这 ' + failures.length + ' 片');
                 throw new Error(failures.length + '/' + segs.length + ' 切片失败（#' + first.index + ' ' + first.reason + '）。建议：' + advice);
             }
             // 完整性校验：数量齐全、非空、TS 同步字节对齐（fMP4 不适用）。
@@ -1563,9 +1583,11 @@
             }
             if (badIdx.length) {
                 // 问题切片置空：好片保留为断点缓存（内存+IDB），重下只补这些
-                partial = { key: dlKey, datas: datas.slice() };
                 try { await idbPutPartial(dlKey, datas); } catch (e) { }
                 const list = badIdx.map((i) => '#' + i).join(' ');
+                partial = { key: dlKey, datas: datas.slice(), failed: badIdx.map((i) => ({
+                    index: i, reason: '内容异常（空或非 TS 结构）' })) };
+                lastFailed = badIdx.slice();
                 appendLog('❌ 完整性校验失败：' + list + ' 内容异常（空数据或非 TS 结构）');
                 throw new Error('完整性校验失败：' + list + ' 内容异常（空数据或非 TS 结构），' +
                     '其余 ' + (segs.length - badIdx.length) + '/' + segs.length +
@@ -1577,6 +1599,7 @@
                 (parsed.fmp4 ? ' · fMP4' : ' · TS 同步字节正常'));
             partial = null;   // 全部下载成功，断点缓存失效
             try { await idbClearPartial(); } catch (e) { }
+            lastFailed = [];
 
             appendLog('⑤ 拼接 ...');
             progressSet(P.mux, '拼接');
@@ -1626,6 +1649,8 @@
             notify('钉钉回放下载失败', brief.length > 120 ? brief.slice(0, 120) + '…' : brief, false);
         } finally {
             goBtn.disabled = false;
+            // 失败则亮出「只重试」按钮，成功/中断则按 lastFailed 现状刷新
+            try { window.__renderRetryRow && window.__renderRetryRow(); } catch (e) { }
         }
     }
 
@@ -2002,10 +2027,37 @@
                 setStatus('🗑 正在清空全部已下载切片…');
             } else {
                 partial = null;
+                lastFailed = null;
+                renderRetryRow();
                 idbClearPartial().catch(() => {});   // 非 async 回调，fire-and-forget
                 setStatus('🗑 下载缓存已清空，下次下载将从头开始');
             }
         });
+
+        // 只重试失败切片：本质就是普通下载——partial 缓存里好片会被自动跳过，
+        // 所以不需要另一条下载路径，按钮只是把「这次只补 N 片」讲清楚并少点一次。
+        const renderRetryRow = () => {
+            const row = $('dlr-retry-row');
+            if (!row) return;
+            const n = lastFailed ? lastFailed.length : 0;
+            const show = n > 0 && !DL.running;
+            row.style.display = show ? 'flex' : 'none';
+            if (!show) return;
+            const info = $('dlr-retry-info');
+            if (info) {
+                const head = lastFailed.slice(0, 12).map((i) => '#' + i).join(' ');
+                info.textContent = '上次失败 ' + n + ' 片（' + head +
+                    (n > 12 ? ' …' : '') + '），其余切片已缓存';
+            }
+        };
+        window.__renderRetryRow = renderRetryRow;   // 供下载流程在状态变化时刷新
+        const retryBtn = $('dlr-retry');
+        retryBtn && retryBtn.addEventListener('click', () => {
+            if (DL.running || !lastFailed || !lastFailed.length) return;
+            setStatus('♻ 正在重试 ' + lastFailed.length + ' 个失败切片…');
+            $('dlr-go').click();     // 走同一条下载路径，partial 自动跳过好片
+        });
+        renderRetryRow();
 
         $('dlr-go').addEventListener('click', () => {
             // 在用户手势内预热 AudioContext：否则下载完成时页面若已无交互，

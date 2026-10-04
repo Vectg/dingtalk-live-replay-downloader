@@ -25,3 +25,10 @@ _*.py
 # 平台
 .ohmyagent/
 .monkeycode/
+
+# 第三方源码/压缩包（调研 aria2 等时下载解压的，一律不入库）
+*.tar.gz
+*.zip
+*.cc
+*.h
+a2/

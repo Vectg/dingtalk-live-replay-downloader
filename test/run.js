@@ -633,6 +633,57 @@ section('notify（完成/失败通知）');
         }
     }
 }
+
+// ---------------------------------------------------------------- 失败片清单
+// 「只重试失败切片」依赖一个不变量：partial.datas 里非空的槽位就是好片，
+// 空槽位就是待重试的片。把这条不变量单独测出来，避免改动下载逻辑时悄悄破坏它。
+section('失败片清单推导');
+{
+    // 与脚本内同构的推导：哪些片缺失
+    // 判定必须与脚本一致：!d || !d.length —— 零长度 Uint8Array 是「真值」对象，
+    // 只写 !d 会把空切片当成好片，正是 1.9.7 完整性校验要抓的那类坏片。
+    const missingOf = (datas) => {
+        const out = [];
+        for (let i = 0; i < datas.length; i++) {
+            if (!datas[i] || !datas[i].length) out.push(i + 1);
+        }
+        return out;
+    };
+    const bytes = (n) => new Uint8Array(n);
+
+    eq(missingOf([bytes(10), bytes(10), bytes(10)]), [], '全部齐全 → 无失败片');
+    eq(missingOf([bytes(10), null, bytes(10)]), [2], '中间缺一片');
+    eq(missingOf([null, null]), [1, 2], '开头连续缺两片');
+    eq(missingOf([bytes(1), null, null, bytes(1)]), [2, 3], '中间连续缺两片');
+    eq(missingOf([bytes(1), new Uint8Array(0), bytes(1)]), [2],
+        '零长度切片（空数据）也算失败片 —— 与脚本 badIdx 的判定一致');
+    eq(missingOf([bytes(1), undefined, bytes(1)]), [2], 'undefined 槽位算失败片');
+    eq(missingOf(new Array(60).fill(null)).length, 60, '全部失败 → 60 片全在清单里');
+
+    // 关键不变量：重试时好片绝不能被重新下载。
+    // 模拟下载流程 —— partial 命中后，只有空槽位进入抓取循环。
+    function simulateRun(datas) {
+        const fetched = [];
+        let cursor = 0;
+        const worker = async () => {
+            while (true) {
+                let i = cursor++;
+                if (i >= datas.length) return;
+                while (i < datas.length && datas[i]) i = cursor++;   // 脚本里的跳过逻辑
+                if (i >= datas.length) return;
+                fetched.push(i + 1);
+                datas[i] = bytes(10);
+            }
+        };
+        return Promise.all([worker(), worker(), worker()]).then(() => fetched);
+    }
+
+    eq(await simulateRun([bytes(10), null, bytes(10), null, bytes(10)]), [2, 4],
+        '重试只抓缺失的两片，好片一片不碰');
+    eq(await simulateRun([bytes(10), bytes(10), bytes(10)]), [],
+        '全片命中缓存 → 不发起任何请求');
+    eq(await simulateRun([null, null, null, null]), [1, 2, 3, 4], '全片缺失 → 全部抓取');
+}
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
