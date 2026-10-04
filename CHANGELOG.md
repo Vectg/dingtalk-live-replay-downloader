@@ -6,10 +6,32 @@
 ## [未发布]
 
 ### 计划
-- **内嵌播放器**:把播放器嵌进钉钉页面自带播放器位置（默认关闭）. **顺延到 3.0.0 之后**,
-  需先确认钉钉回放页在未登录/可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
-- **推送到下载器**（aria2 RPC 等本地下载器集成）:同样顺延到 3.0.0 之后.
+- **内嵌播放器** / **推送到下载器**（aria2）/ **视口自适应深度优化**:均顺延到 3.0.0 之后.
+## [2.6.1] - 2026-10-04
+
+### 新增
+- **面板视口自适应**:面板高度上限跟随窗口可用高度(`calc(100vh - 140px)`),
+  超出部分在面板内滚动并配了细滚动条. 实测 700/800/1200px 三种视口下面板均不超出边界.
+- **全局紧凑排版**:区块间距 8→5px、行间距 6→3px、输入框与下拉 34→26px、
+  提示文字 11→10.5px. 全部展开时面板从 1178px 降到约 770px(约 -35%).
+### 修复
+- **BUGFIX(用户实测): 打开「更多设置」看不到任何东西**.
+  两个叠加原因: ① 折叠区在收起态(`height:0`+`overflow:hidden`)下 `scrollHeight`
+  恒为 0, 于是 `if (h > 0)` 永远不成立、高度永远写不进去; ② 实测该页面上
+  `.open{opacity:1}` 虽已匹配却仍算出 0, class 规则不可靠.
+  现在高度与 **opacity 都由 JS 写内联**(内联优先级最高, 不依赖样式表计算),
+  并给一个兜底高度保证点开瞬间就有内容, 再异步实测修正.
+- **BUGFIX: 展开后下方元素错位**. 曾给 `.open` 加 `height:auto` 兜底, 与收起态的
+  `height:0` 语义冲突, 把页脚等元素顶到错误位置. 展开态只改透明度, 高度一律内联.
+- **样式注入双保险**: `GM_addStyle` 改为「优先调用、失败或未生效则退回原生<style>」,
+  避免沙箱内偶发失效导致整段样式丢失且无任何报错.
+- **实测修正改用 `setTimeout(…,0)`**: `requestAnimationFrame` 在页面不可见时被节流,
+  不保证执行, 会让展开动画停在兜底高度上.
+### 技术细节
+- 收起/展开动画统一用**内联 height + opacity 过渡**: 实测本页面上 class 规则会被
+  压过(连 `!important` 都输), 内联优先级最高, 不依赖任何 CSS 特异性计算.
 ## [2.6.0] - 2026-10-04
+
 
 ### 新增
 - **收起成横条后也能拖动**:此前拖拽把手只在展开态的标题区, 收起后仅剩的横条没有
@@ -301,7 +323,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.HEAD
+[2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.v2.6.1
 [2.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0.v2.6.0
 [2.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.v2.5.0
 [2.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.v2.4.0

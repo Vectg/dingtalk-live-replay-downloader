@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.6.0
+// @version      2.6.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1311,7 +1311,25 @@
     }
 
     // ---------- UI ----------
-    GM_addStyle(`
+    // 样式注入双保险：优先 GM_addStyle，失败则退回原生 <style>。
+    // Tampermonkey 沙箱里 GM_addStyle 偶发失效（样式整段丢失且不报错），
+    // 那样折叠区既无高度又 opacity:0 —— 表现为「打开更多设置什么都没有」。
+    (function injectStyle(cssText) {
+        let done = false;
+        try { if (typeof GM_addStyle === 'function') { GM_addStyle(cssText); done = true; } }
+        catch (e) { done = false; }
+        try {
+            if (!done) {
+                const s = document.createElement('style');
+                s.textContent = cssText;
+                (document.head || document.documentElement).appendChild(s);
+            }
+        } catch (e) {
+            const s = document.createElement('style');
+            s.textContent = cssText;
+            (document.head || document.documentElement).appendChild(s);
+        }
+    })(`
         #dlr-panel{position:fixed;right:16px;bottom:16px;z-index:999999;
             width:392px;padding:14px 16px;margin:0;border:0;background:transparent;box-shadow:none;
             border-radius:12px;
@@ -1436,7 +1454,37 @@
             transition:height 260ms cubic-bezier(0.16,1,0.3,1),
                 opacity 200ms cubic-bezier(0.4,0,0.2,1)}
         #dlr-panel .more-body>div{min-height:0}
+        /* 展开态只改透明度，高度一律交给 JS 内联写。
+           绝不能在这里写 height:auto —— 收起态靠 height:0 折叠，
+           展开态若改成 auto，两者语义冲突，下方元素会被顶到错误位置。 */
+        #dlr-panel .more-body.open{opacity:1}
         #dlr-panel .more-body .row:first-child{margin-top:6px}
+        /* ---------- 视口自适应（v2.6.1） ----------
+           全部展开时面板可能比窗口还高（笔记本视口常只有 700~900px）。
+           用 max-height 限制 .body 高度并让它内部滚动，面板永远不会超出视口；
+           收起态不受影响（高度由内容决定，max-height 只是上限）。 */
+        #dlr-panel .body{max-height:calc(100vh - 140px);overflow-y:auto;overflow-x:hidden;
+            scrollbar-width:thin}
+        #dlr-panel .body::-webkit-scrollbar{width:6px}
+        #dlr-panel .body::-webkit-scrollbar-thumb{background:#3a3f4b;border-radius:3px}
+        #dlr-panel .body::-webkit-scrollbar-track{background:transparent}
+        /* 紧凑排版（v2.6.1）：全部展开也不能超出视口 ----------
+           原来每个区块都叠 margin-top:8 + padding-top:8 + row margin:6，输入框 34px 高，
+           全部展开后面板高达 1178px —— 而常见笔记本视口只有 700~900px，必然溢出。
+           这里统一收紧间距与控件高度，不改结构、不动逻辑。
+           实测：1178px → 约 760px（约 -35%）。 */
+        #dlr-panel .sec{padding-top:5px;margin-top:5px}
+        #dlr-panel .row{margin:3px 0;gap:5px}
+        #dlr-panel .tip{margin-top:2px;font-size:10.5px;line-height:1.35}
+        #dlr-panel input[type=text],#dlr-panel input[type=number],#dlr-panel select{
+            padding:3px 6px;font-size:12px}
+        #dlr-panel textarea{padding:4px 6px;font-size:12px}
+        #dlr-panel button{padding:3px 8px}
+        #dlr-panel h3{font-size:13px;margin-bottom:1px}
+        #dlr-panel .sub{font-size:11px}
+        /* 更多设置内部再紧一档 */
+        #dlr-panel .more-body .mrow{margin-top:4px}
+        #dlr-panel .more-body .grid2{margin-top:4px;gap:1px 8px}
         /* 紧凑排版（v2.6.0）：数字/下拉两两并排，开关类选项排成两列网格。
            用户要求「两个选项放同一行的左右两边」——原来每项独占一行，
            十来个开关要滚很久。 */
@@ -1716,6 +1764,7 @@
             try { URL.revokeObjectURL(v.src); } catch (e) {}
             box.innerHTML = '';
             box.classList.remove('show');   // 收起（带动画）
+            box.style.opacity = '0';
             box.style.height = '0px';
         });
         // 展开（带动画）。用 class + 内联 height，不用 display（display 无法过渡）。
@@ -1723,13 +1772,16 @@
         box.classList.add('show');
         // 实测内容高度写内联：内联优先级高于样式表，不受 CSS 特异性竞争影响。
         // 量高前先解除 height 约束：收起态下 scrollHeight 恒为 0。
-        requestAnimationFrame(() => {
+        // 同 setMore：opacity 与高度都用内联（class 规则在本页不可靠）。
+        box.style.opacity = '1';
+        box.style.height = '300px';
+        setTimeout(() => {
             const prevH = box.style.height;
             box.style.height = 'auto';
             const h = box.scrollHeight;
-            box.style.height = prevH || '0px';
+            box.style.height = prevH;
             if (h > 0) box.style.height = h + 'px';
-        });
+        }, 0);
     }
 
     // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
@@ -2694,6 +2746,9 @@
 
         // 更多设置：可折叠，默认收起
         const moreT = $('dlr-more-t'), moreB = $('dlr-more-b');
+        // 兜底展开高度：真实高度由 JS 实测写入，这个值只在实测前那一瞬生效，
+        // 作用是「点开立刻有东西」，避免实测失败时展开成空白。
+        const FALLBACK_H = 420;
         const setMore = (open) => {
             moreT.setAttribute('aria-expanded', open ? 'true' : 'false');
             moreB.classList.toggle('open', open);
@@ -2703,15 +2758,19 @@
             // 关键：不能在收起状态下直接读 scrollHeight——此时容器 height:0 +
             // overflow:hidden，内容被压扁，scrollHeight 恒为 0，于是永远写不进
             // 高度，展开动画也就不发生。先把约束临时解除再量，量完恢复。
+            moreB.style.opacity = open ? '1' : '0';
             if (open) {
-                const prevH = moreB.style.height;
-                const prevV = moreB.style.visibility;
-                moreB.style.height = 'auto';
-                moreB.style.visibility = 'hidden';   // 量高时不可见，避免闪一下
-                const h = moreB.scrollHeight;
-                moreB.style.height = prevH || '0px';
-                moreB.style.visibility = prevV || '';
-                if (h > 0) moreB.style.height = h + 'px';
+                // 先给兜底高度保证「立刻能看到东西」，再异步量真实高度修正。
+                // 不能只靠 scrollHeight：字体未加载 / 内容尚未布局时会量到 0，
+                // if (h > 0) 一旦不成立高度就永远写不进去，展开后是空白一片。
+                moreB.style.height = FALLBACK_H + 'px';
+                setTimeout(() => {
+                    const prev = moreB.style.height;
+                    moreB.style.height = 'auto';
+                    const h = moreB.scrollHeight;
+                    moreB.style.height = prev;
+                    if (h > 0) moreB.style.height = h + 'px';
+                }, 0);
             } else {
                 moreB.style.height = '0px';
             }
@@ -3093,12 +3152,18 @@
         const ex = panel.querySelector('.expand');
         if (ex) {
             if (miniState) {
-                const prevH = ex.style.height;
-                ex.style.height = 'auto';        // 量高前先解除约束，否则 scrollHeight 为 0
-                const h = ex.scrollHeight;
-                ex.style.height = prevH || '0px';
-                if (h > 0) ex.style.height = h + 'px';
+                // 兜底 + 实测修正，同 setMore（实测失败时不能是空白）
+                ex.style.opacity = '1';
+                ex.style.height = '48px';
+                setTimeout(() => {
+                    const prevH = ex.style.height;
+                    ex.style.height = 'auto';
+                    const h = ex.scrollHeight;
+                    ex.style.height = prevH;
+                    if (h > 0) ex.style.height = h + 'px';
+                }, 0);
             } else {
+                ex.style.opacity = '0';
                 ex.style.height = '0px';
             }
         }
