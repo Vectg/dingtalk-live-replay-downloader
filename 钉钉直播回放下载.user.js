@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.3
+// @version      1.9.4
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -800,6 +800,12 @@
             font-size:11px;color:#6d727c;display:flex;gap:5px;align-items:center}
         #dlr-panel .foot a{color:#7d828d;text-decoration:none}
         #dlr-panel .foot a:hover{color:#3d6eff;text-decoration:underline}
+        /* 检查更新：灰色小字（v1.9.4 起不再是按钮）；发现新版转为可点击的蓝色提示 */
+        #dlr-panel .foot #dlr-update{cursor:pointer;color:#565b66;user-select:none;
+            transition:color 150ms ease-out}
+        #dlr-panel .foot #dlr-update:hover{color:#8b93a3}
+        #dlr-panel .foot #dlr-update.found{color:#3d6eff}
+        #dlr-panel .foot #dlr-update.found:hover{color:#6d9bff}
         #dlr-panel .collapse{transition:opacity 150ms ease-out}
         #dlr-panel.mini .collapse{opacity:0}
         #dlr-panel.mini .expand .ic{
@@ -894,15 +900,16 @@
                 </div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label></div>
                 <div class="row"><label class="chk"><input type="checkbox" id="dlr-frost">毛玻璃</label></div>
+                <div class="row"><label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label></div>
                 <div class="tip">预取播放地址与切片索引，打开页面后无需等待即可直接下载。</div>
             </div></div>
         </div>
         <div class="foot">
             <span>v<span id="dlr-ver">--</span></span>
+            <span id="dlr-update" title="检查更新；发现新版后点击跳转下载页">检查更新</span>
             <span style="color:#3a3f4b">·</span>
             <span>By</span>
             <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
-            <button id="dlr-update" title="从 GitHub 拉取最新版">检查更新</button>
         </div>
         </div>
         </div>
@@ -1565,48 +1572,99 @@
         const applyFrost = () => panel.classList.toggle('frost', frost.checked);
         frost.addEventListener('change', applyFrost);
         applyFrost();
+        const autoUpd = bindChk('dlr-autoupdate', 'dlr_autoupdate', true);   // 自动检查更新：默认开启
 
-        // 版本号回填 + 检查更新（GitHub 不通时回落 Gitee）
+        // 版本号回填 + 检查更新（v1.9.4：灰色小字、自动检查默认开、发现新版只提示不跳转）
         $('dlr-ver').textContent = VERSION;
         const upd = $('dlr-update');
-        upd.addEventListener('click', async () => {
-            const oldText = upd.textContent;
-            upd.disabled = true;
-            upd.textContent = '检查中…';
-            const fetchVer = (url) => new Promise((res, rej) => {
-                GM_xmlhttpRequest({
-                    url, method: 'GET',
-                    onload: (r) => (r.status >= 200 && r.status < 300) ? res(r.responseText) : rej(new Error('HTTP ' + r.status)),
-                    onerror: () => rej(new Error('网络错误')),
-                    ontimeout: () => rej(new Error('超时')),
-                });
+        const UPD = { busy: false, found: null, timer: 0 };
+        const UPD_IDLE = '检查更新';
+        const setUpd = (text, cls) => {
+            upd.textContent = text;
+            upd.classList.toggle('found', !!cls);
+        };
+        const fetchVer = (url) => new Promise((res, rej) => {
+            GM_xmlhttpRequest({
+                url, method: 'GET',
+                onload: (r) => (r.status >= 200 && r.status < 300) ? res(r.responseText) : rej(new Error('HTTP ' + r.status)),
+                onerror: () => rej(new Error('网络错误')),
+                ontimeout: () => rej(new Error('超时')),
             });
+        });
+        const remoteVersion = async () => {
+            let txt;
             try {
-                let txt;
-                try {
-                    txt = await fetchVer(UPDATE_URL);
-                } catch (e1) {
-                    appendLog('GitHub 不通，回落 Gitee');
-                    txt = await fetchVer(UPDATE_URL_FALLBACK);
-                }
-                const m = txt.match(/@version\s+(\S+)/);
-                if (!m) throw new Error('无法解析远程版本号');
-                if (compareVersions(m[1], VERSION) > 0) {
-                    setStatus('🔄 发现新版 ' + m[1] + '（当前 ' + VERSION + '），已打开更新页');
-                    window.open(UPDATE_URL, '_blank');
-                    upd.textContent = '已打开更新页';
+                txt = await fetchVer(UPDATE_URL);
+            } catch (e1) {
+                pushHistory('GitHub 不通，回落 Gitee');
+                txt = await fetchVer(UPDATE_URL_FALLBACK);
+            }
+            const m = txt.match(/@version\s+(\S+)/);
+            if (!m) throw new Error('无法解析远程版本号');
+            return m[1];
+        };
+        const quietLog = (msg) => {
+            const d = new Date(), p = (n) => String(n).padStart(2, '0');
+            pushHistory(p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '  ' + msg);
+        };
+        const showFound = (v) => {
+            UPD.found = v;
+            setUpd('发现新版 ' + v + ' ↑', true);
+            upd.title = '发现新版 ' + v + '（当前 ' + VERSION + '），点击打开更新页';
+        };
+        // 点击：空闲=检查；已发现新版=跳转下载页；检查中=忽略
+        upd.addEventListener('click', async () => {
+            if (UPD.busy) return;
+            if (UPD.found) {
+                setStatus('🔄 已打开更新页 v' + UPD.found + '（当前 ' + VERSION + '），在油猴里确认更新即可');
+                window.open(UPDATE_URL, '_blank');
+                return;
+            }
+            clearTimeout(UPD.timer);
+            UPD.busy = true;
+            setUpd('检查中…');
+            try {
+                const v = await remoteVersion();
+                if (compareVersions(v, VERSION) > 0) {
+                    showFound(v);
+                    setStatus('🔄 发现新版 ' + v + '（当前 ' + VERSION + '），点击「发现新版」跳转下载页');
                 } else {
                     setStatus('✅ 已是最新版 v' + VERSION);
-                    upd.textContent = '最新';
+                    setUpd('已是最新');
+                    UPD.timer = setTimeout(() => setUpd(UPD_IDLE), 2600);
                 }
             } catch (e) {
                 setStatus('❌ 检查更新失败：' + e.message, true);
-                upd.textContent = '失败';
+                setUpd('失败');
+                UPD.timer = setTimeout(() => setUpd(UPD_IDLE), 2600);
             } finally {
-                upd.disabled = false;
-                setTimeout(() => { upd.textContent = oldText; }, 2600);
+                UPD.busy = false;
+                upd.title = UPD.found
+                    ? ('发现新版 ' + UPD.found + '，点击打开更新页')
+                    : '检查更新；发现新版后点击跳转下载页';
             }
         });
+        // 自动检查（默认开启，可在更多设置关闭）：只把角标变成「发现新版」，
+        // 不跳转、不打扰状态栏；关闭后仍可点「检查更新」手动比对再决定是否跳转
+        if (autoUpd.checked) {
+            setTimeout(async () => {
+                if (UPD.busy || UPD.found) return;
+                UPD.busy = true;
+                try {
+                    const v = await remoteVersion();
+                    if (compareVersions(v, VERSION) > 0) {
+                        showFound(v);
+                        quietLog('🔄 自动检查：发现新版 ' + v + '（当前 ' + VERSION + '），点击「发现新版」跳转下载页');
+                    } else {
+                        quietLog('检查更新：已是最新版 v' + VERSION);
+                    }
+                } catch (e) {
+                    quietLog('检查更新（自动）失败：' + e.message);
+                } finally {
+                    UPD.busy = false;
+                }
+            }, 1600);
+        }
 
         // 收缩 / 展开：不用时缩成一个小图标，状态持久化
         // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
