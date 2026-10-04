@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.5
+// @version      3.0.6
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -3702,7 +3702,10 @@
                 e.preventDefault();
                 return;
             }
-            if (k === '' || k === 'Spacebar') {
+            // 浏览器给空格键的 e.key 是**含一个空格字符**的 ' '，不是空串；
+            // 'Spacebar' 是 IE/EdgeHTML 时代的旧值。原先只比 k === '' 与 k === 'Spacebar'，
+            // 两个分支都命不中 —— 空格快捷键自 v2.4.0 引入起就从未生效过。
+            if (k === ' ' || k === '' || k === 'Spacebar') {
                 // 空格：空闲时开始下载；下载中暂停/继续（同一键随状态切换）
                 if (DL.running) {
                     const p = $('dlr-pause');
