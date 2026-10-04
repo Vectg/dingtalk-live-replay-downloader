@@ -7,7 +7,31 @@
 
 ### 计划
 - **内嵌播放器** / **推送到下载器**(aria2)/ **视口自适应深度优化**: 均顺延到 3.0.0 之后.
+## [2.9.0] - 2026-10-04
+
+全量代码审计: 逐项静态扫描脚本 3800+ 行, 修掉扫描发现的真实缺陷, 并做浏览器回归.
+
+### 修复
+- **BUGFIX: `qGo` / `qClear` / `qInfo` 是隐式全局变量**.
+  `const qBox = ..., qRow = ...,\n    qGo = ..., qClear = ..., qInfo = ...` —— 逗号续行时
+  只有第一项带声明符, 第二行三个变量全部漏了 `const`, 于是挂到 `window` 上污染
+  共享作用域(userscript 之间共用同一个全局对象).
+- **BUGFIX: 下载异常时 `DL.running` 可能永久停在 true**.
+  `run()` 的 `finally` 只恢复按钮, `DL.running` 的复位依赖 `progressDone()`;
+  而 `progressDone()` 内有一堆 DOM 操作(进度条 / spinner / 光环), 它自己抛错时
+  状态就再也复位不了 —— 之后空格/Esc 快捷键全部失效、「删除已下载」也清不掉缓存,
+  面板看起来「死了」. 现在 `finally` 无条件复位运行态与预下载运行态.
+- 拖拽 mouseup 与自定义分辨率回退里的 `GM_setValue` 补 try 保护:
+  前者抛错会跳过下一行 `suppressExpandClickAt` 赋值, 症状是「拖完面板反而弹开」.
+### 审计覆盖
+- 空catch 与异常吞噬点(43 处, 逐个确认无害)
+- 循环内 await(确认均为必要的串行语义, 非性能问题)
+- `innerHTML` 赋值(3 处, 均为清空, 无注入面)
+- 未声明全局变量(16 处疑似 → 确认 3 处真实, 已修)
+- `DL.running` 状态机的所有置位/复位路径
+- `setInterval` / `setTimeout` 泄漏
 ## [2.7.0] - 2026-10-04
+
 
 ### 新增
 - **解析阶段后台预下载**: 打开回放页后, `prep()` 解析出切片列表即在后台静默下载,
@@ -368,7 +392,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.9.0.HEAD
+[2.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0.v2.9.0
 [2.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.v2.7.0
 [2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.v2.6.3
 [2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.v2.6.2

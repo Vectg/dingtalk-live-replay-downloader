@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-2.7.0-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-2.9.0-informational)](CHANGELOG.md)
 
 A Tampermonkey userscript that downloads DingTalk live replays **without logging in** — fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
 
@@ -12,7 +12,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v2.7.0）
+## 功能（v2.9.0）
 
 **核心**
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.7.0
+// @version      2.9.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -2792,6 +2792,16 @@
             const brief = String(err.message || '').split('\n')[0];
             notify('钉钉回放下载失败', brief.length > 120 ? brief.slice(0, 120) + '...' : brief, false);
         } finally {
+            // 兜底复位：progressDone() 里有一堆 DOM 操作（进度条/spinner/光环），
+            // 万一它自己抛错，DL.running 会永远停在 true —— 之后空格/Esc 快捷键全部
+            // 失效、「删除已下载」也清不掉缓存，面板看起来「死了」。这里无条件复位。
+            DL.running = false; DL.pause = false; DL.cancel = false;
+            // 预下载的停止标志也要复位：正式下载时置 true 让它停下，
+            // 但下一轮解析若不复位，startPreDownload 会直接 return、预下载再也不启动。
+            pre.running = false;
+            try { panel.classList.remove('dling'); } catch (e) { }
+            try { const c = $('dlr-ctl'); if (c) c.style.display = 'none'; } catch (e) { }
+            try { const pb = $('dlr-pause'); if (pb) pb.textContent = '⏸ 暂停'; } catch (e) { }
             goBtn.disabled = false;
             // 失败则亮出「只重试」按钮，成功/中断则按 lastFailed 现状刷新
             try { window.__renderRetryRow && window.__renderRetryRow(); } catch (e) { }
@@ -3089,7 +3099,7 @@
                 if (!hit) {
                     setStatus('⚠ 没有不超过原始分辨率且接近 ' + normalized + ' 的档位, 已回到"自动"', true);
                     resSel.value = '';
-                    GM_setValue('dlr_res', '');
+                    try { GM_setValue('dlr_res', ''); } catch (e) { }
                     return;
                 }
                 resSel.value = hit.res;
@@ -3488,8 +3498,11 @@
         });
 
         // ---------- 队列 UI ----------
+        // 三个 q* 变量原先漏了 const（逗号续行时只有第一项带声明），
+        // 于是它们会变成隐式全局变量并污染共享作用域。
         const qBox = $('dlr-queue'), qRow = $('dlr-queue-ctl'),
-            qGo = $('dlr-queue-go'), qClear = $('dlr-queue-clear'), qInfo = $('dlr-queue-info');
+            qGo = $('dlr-queue-go'), qClear = $('dlr-queue-clear'),
+            qInfo = $('dlr-queue-info');
         const renderQueue = () => {
             const { out, errs } = parseQueueInput(qBox.value);
             if (!qRow) return;
@@ -3624,7 +3637,10 @@
                 delete pv2.dataset.preDragShown;
             }
             const r = panel.getBoundingClientRect();
-            GM_setValue(POS_KEY, Math.round(r.left) + ',' + Math.round(r.top));
+            // 必须 try 保护：这里若抛错会跳过下面的 suppressExpandClickAt 赋值，
+            // 结果是「拖完面板反而弹开」。
+            try { GM_setValue(POS_KEY, Math.round(r.left) + ',' + Math.round(r.top)); }
+            catch (e) { }
             // 拖过之后不要再触发横条的「点击展开」——否则拖一下就弹开了。
             // 用时间戳而不是标志位：click 事件紧跟 mouseup 在同一轮派发，
             // setTimeout(...,0) 清标志的回调会先跑，导致标志提前失效。
