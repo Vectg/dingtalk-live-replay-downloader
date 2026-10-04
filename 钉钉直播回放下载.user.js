@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      2.3.0
+// @version      2.4.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1026,6 +1026,35 @@
         };
     }
 
+    // ---------- 面板拖拽定位（v2.4.0，纯函数便于单测） ----------
+    // 面板原本靠 CSS 的 right/bottom 固定在右下角。拖过之后改用 left/top 精确定位，
+    // 所以必须把「视口左上角坐标」换算回 right/bottom，否则窗口尺寸一变就错位。
+    //
+    // 钳制策略是刻意不对称的：**只夹 x，不夹 y**。
+    // 面板展开后可以比视口还高（内容多时 700px+ 很正常），若把 y 也夹进视口，
+    // 面板高度超过视口时就永远只能贴在顶部、拖不下去——用户会觉得「拖不动」。
+    // 纵向可以超出视口（页面本身能滚，面板跟着滚就行），横向必须夹住，
+    // 否则面板会整个消失到屏幕外、用户找不到也拖不回来。
+    function clampPanelPos(x, y, w, h, vw, vh) {
+        const gap = 8;
+        const maxX = Math.max(gap, vw - w - gap);
+        return {
+            x: Math.min(Math.max(x, gap), maxX),
+            y: Math.max(gap, y),          // 只保留下边界，顶部不被裁掉
+        };
+    }
+    // 把 left/top 坐标反算成 CSS 的 right/bottom（面板宽度未知时用当前实测值）
+    function posToRightBottom(x, y, w, h, vw, vh) {
+        const c = clampPanelPos(x, y, w, h, vw, vh);
+        return {
+            left: c.x + 'px',
+            top: c.y + 'px',
+            // right/bottom 允许为 0：面板超出视口时本就没有"到右边的距离"
+            right: Math.max(0, vw - c.x - w) + 'px',
+            bottom: Math.max(0, vh - c.y - h) + 'px',
+        };
+    }
+
     // ---------- 截取时间输入的单位上限（v2.3.0） ----------
     // 用户不该先猜「这场回放有多长」再决定填 mm:ss 还是 hh:mm:ss。
     // 这里按已解析出的回放总时长推出「上限形态」：
@@ -1315,6 +1344,14 @@
                 width 280ms cubic-bezier(0.16,1,0.3,1)}
         /* 内容包裹层：grid-template-rows 从 1fr → 0fr 才能把 auto 高度平滑补间到 0 */
         #dlr-panel .bin{overflow:hidden;min-height:0;min-width:0}
+        /* 拖拽把手（v2.4.0）：标题区整块可拖，光标变 move 表示可拖。
+           user-select:none 是关键——否则拖动会顺带选中标题文字，手感很脏。
+           touch-action:none 让触屏/触控笔也能拖，而不是触发页面滚动。 */
+        #dlr-panel .drag{cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}
+        #dlr-panel .drag:active{cursor:grabbing}
+        /* 拖动中：禁掉过渡，否则 width/left 一起动画会粘滞 lagging 手感 */
+        #dlr-panel.dragging{transition:none!important}
+        #dlr-panel.dragging .drag{cursor:grabbing}
         #dlr-panel.frost .body{backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel h3{margin:0 0 2px;font-size:14px;font-weight:650;color:#f0f1f4;letter-spacing:.2px;
             /* 右侧让开绝对定位的「收起」按钮（约 42px 宽 + 8px 边距），避免标题被盖住 */
@@ -1479,7 +1516,7 @@
         </div>
         <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
-        <div class="bin">
+        <div class="bin drag">
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录 · 公开接口抓取 m3u8</div>
         <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接，或自动读取本页"></div>
@@ -3112,6 +3149,89 @@
         };
         qBox && qBox.addEventListener('input', renderQueue);
         qBox && qBox.addEventListener('change', renderQueue);
+
+        // ---------- 面板拖拽 + 键盘快捷键（v2.4.0） ----------
+        // 位置持久化：只存用户拖过之后的坐标；没拖过就保持 CSS 的右下角默认位，
+        // 这样窗口变小/变大时默认位依然正确（存死坐标会在小窗口下越界）。
+        const POS_KEY = 'dlr_pos';
+        let dragging = false, dragOffX = 0, dragOffY = 0;
+
+        const applyPos = (x, y) => {
+            const r = panel.getBoundingClientRect();
+            const p = posToRightBottom(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
+            panel.style.left = p.left;
+            panel.style.top = p.top;
+            panel.style.right = p.right;
+            panel.style.bottom = p.bottom;
+        };
+        const restorePos = () => {
+            const raw = GM_getValue(POS_KEY, '');
+            if (!raw) return;
+            const m = String(raw).match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+            if (!m) return;
+            applyPos(parseFloat(m[1]), parseFloat(m[2]));
+        };
+        const handle = panel.querySelector('.drag');
+        if (handle) {
+            handle.addEventListener('mousedown', (e) => {
+                // 只认左键；别抢输入框/按钮上的手势
+                if (e.button !== 0) return;
+                const r = panel.getBoundingClientRect();
+                dragging = true;
+                dragOffX = e.clientX - r.left;
+                dragOffY = e.clientY - r.top;
+                panel.classList.add('dragging');
+                e.preventDefault();   // 防止拖出文字选中 / 触发原生拖拽
+            });
+        }
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            applyPos(e.clientX - dragOffX, e.clientY - dragOffY);
+        });
+        window.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            panel.classList.remove('dragging');
+            const r = panel.getBoundingClientRect();
+            GM_setValue(POS_KEY, Math.round(r.left) + ',' + Math.round(r.top));
+        });
+
+        // 快捷键：一律带 modifier 或用安全键，避免和输入法/网页快捷键打架。
+        // 输入框、textarea、可编辑区里不拦截——用户正在打字不能被抢键。
+        // 用 DL.running 而不是看按钮显隐来判断状态：面板收起时 dlr-ctl 不可见，
+        // 但下载确实在跑——只看显隐会让空格在收起状态下误触发「开始下载」。
+        const typing = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+        window.addEventListener('keydown', (e) => {
+            if (typing(e.target) || e.altKey || e.ctrlKey || e.metaKey) return;
+            const k = e.key;
+            if (k === 'Escape') {
+                // Esc：下载中先中断（最需要立刻能停），否则收起/展开面板
+                if (DL.running) {
+                    const cancelBtn = $('dlr-cancel');
+                    if (cancelBtn) cancelBtn.click();
+                } else {
+                    setMini(!panel.classList.contains('mini'));
+                }
+                e.preventDefault();
+                return;
+            }
+            if (k === ' ' || k === 'Spacebar') {
+                // 空格：空闲时开始下载；下载中暂停/继续（同一键随状态切换）
+                if (DL.running) {
+                    const p = $('dlr-pause');
+                    if (p) p.click();
+                } else {
+                    $('dlr-go').click();
+                }
+                e.preventDefault();
+                return;
+            }
+            if (k && k.toLowerCase() === 'm') {
+                setMini(!panel.classList.contains('mini'));
+                e.preventDefault();
+            }
+        });
+        restorePos();
 
         // ---------- 截取时间输入：单位上限跟随回放总时长（v2.3.0） ----------
         // 时长未知时只规范化已填文本；解析出总时长后才知道该不该用 hh:mm:ss。

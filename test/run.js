@@ -128,6 +128,52 @@ section('parseTimeArg');
     throws(() => parseTimeArg('-5', '开始'), '负号报错');
 }
 
+section('面板拖拽定位 clampPanelPos / posToRightBottom（v2.4.0）');
+{
+    const { clampPanelPos, posToRightBottom } = loadFns(['clampPanelPos', 'posToRightBottom']);
+    const VW = 1258, VH = 566, W = 392, H = 736;   // H > VH：面板比视口还高（真实情况）
+    const GAP = 8;
+
+    // 视口比面板还窄（手机竖屏 / 小窗）：x 必须夹住，否则面板整个消失到屏幕外
+    eq(clampPanelPos(0, 0, W, H, 400, 300).x, GAP, '视口窄于面板 → x 夹到 gap');
+
+    // x 四边钳制
+    eq(clampPanelPos(-999, -999, W, H, VW, VH).x, GAP, 'x<0 → 夹到左边界');
+    eq(clampPanelPos(-999, -999, W, H, VW, VH).y, GAP, 'y<0 → 夹到上边界');
+    eq(clampPanelPos(99999, 99999, W, H, VW, VH).x, VW - W - GAP, 'x 过大 → 夹到右边界');
+
+    // y 只夹上界：面板高于视口时也允许往下拖（否则永远贴顶，= 拖不动）
+    eq(clampPanelPos(100, 99999, W, H, VW, VH).y, 99999, 'y 过大 → 不夹（页面可滚）');
+    const TALL = 1000;
+    eq(clampPanelPos(100, 99999, W, H, VW, TALL).y, 99999, '视口够高也不夹 y（刻意设计）');
+
+    // 区间内原样返回
+    eq(clampPanelPos(100, 100, W, H, VW, VH).x, 100, '区间内 x 原样');
+    eq(clampPanelPos(100, 100, W, H, VW, VH).y, 100, '区间内 y 原样');
+
+    // right/bottom 反算自洽，且永不为负
+    const p = posToRightBottom(100, 100, W, H, VW, VH);
+    eq(p.left, '100px', 'posToRightBottom left');
+    eq(p.top, '100px', 'posToRightBottom top');
+    eq(p.right, (VW - 100 - W) + 'px', 'posToRightBottom right 反算正确');
+    eq(p.bottom, '0px', '面板高于视口 → bottom 夹到 0 而非负数');
+
+    // 拖到左上角
+    const q = posToRightBottom(0, 0, W, H, VW, VH);
+    eq(q.left, '8px', 'x<0 → 夹到 gap 后再反算');
+    eq(q.right, (VW - GAP - W) + 'px', '拖到左上角后 right 反算');
+
+    // 幂等：反算结果再拿回坐标，位置不变
+    const rt = posToRightBottom(250, 60, W, H, VW, VH);
+    eq(parseInt(rt.left, 10), 250, '往返一致 x');
+    eq(parseInt(rt.top, 10), 60, '往返一致 y');
+
+    // right/bottom 永远 ≥ 0（负值会让浏览器当成反向偏移，面板瞬移到右上角）
+    const neg = posToRightBottom(-500, -500, W, H, VW, VH);
+    eq(neg.right, (VW - GAP - W) + 'px', '极端左上位移 → right 仍正确');
+    eq(neg.bottom, '0px', '极端左上位移 → bottom 不为负');
+}
+
 section('clipTimeHint / normalizeClipText（截取时间单位自动识别 v2.3.0）');
 {
     const { clipTimeHint, normalizeClipText, parseTimeArg } = loadFns(

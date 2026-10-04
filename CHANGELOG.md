@@ -9,12 +9,27 @@
 - **内嵌播放器**:把播放器嵌进钉钉页面自带播放器位置（默认关闭）. **顺延到 3.0.0 之后**,
   需先确认钉钉回放页在未登录/可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
 - **推送到下载器**（aria2 RPC 等本地下载器集成）:同样顺延到 3.0.0 之后.
+## [2.4.0] - 2026-10-04
+
+### 新增
+- **面板可拖拽**:按住标题区即可拖动, 位置写入 `GM_setValue('dlr_pos')`, 刷新后恢复.
+- **键盘快捷键**:`空格` 开始下载/下载中暂停继续, `Esc` 下载中中断、空闲时收起展开,
+  `M` 切换收起. 输入框/textarea/可编辑区内一律不拦截, 打字不会被抢键.
+### 技术细节
+- 拖拽钳制**刻意不对称**:只夹 x 不夹 y. 面板展开后常比视口还高(实测 658px vs 视口 566px),
+  若把 y 也夹进视口, 面板就永远贴在顶部、用户会以为「拖不动」. 横向必须夹住, 否则面板
+  会整个消失到屏幕外、找不回来.
+- 拖动中给面板加 `.dragging` 临时关掉 transition——否则 width/left 一起做动画会粘滞.
+- 快捷键用 `DL.running` 判断状态, 不看按钮显隐: 面板收起时控制条不可见但下载确实在跑,
+  只看显隐会让空格在收起状态下误触发「开始下载」.
+- 把手用 `user-select:none` + `touch-action:none`, 前者防拖动时选中标题文字, 后者让
+  触屏也能拖而不是触发页面滚动.
 ## [2.3.0] - 2026-10-04
 
 ### 新增
 - **截取时间单位自动识别**:时间框不再预设 `mm:ss`, 解析出回放总时长后按需切换——
-  不足 1 小时提示 `mm:ss`, 达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99,
-  可填 `100:00:00`）, 框内灰字提示随总时长实时更新.
+不足 1 小时提示 `mm:ss`, 达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99,
+可填 `100:00:00`）, 框内灰字提示随总时长实时更新.
 - **失焦自动补零**:离开时间框时把 `1:2:3` 规范成 `01:02:03`, `1:2` 规范成 `1:02`.
   全角数字/中文冒号/空白/零宽字符照旧自动修复.
 ### 修复
@@ -242,7 +257,8 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.HEAD
+[2.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.v2.4.0
 [2.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1.v2.3.0
 [2.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.0.v2.2.1
 [2.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.1.0.v2.2.0
