@@ -11,7 +11,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 
 ---
 
-## 功能（v1.9.1）
+## 功能（v1.9.2）
 
 **核心**
 
@@ -26,6 +26,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 **性能与预取**
 
 - **预取播放信息**（更多设置，默认开启）：打开回放页即在后台预取 csrf → 播放地址 → m3u8 切片索引，缓存 10 分钟。点「下载本页回放」直接进入切片下载阶段，省掉每次 1~3 秒的解析等待。文件名输入框的 placeholder 会直接回填为解析出的回放标题。
+- **并发线程自动识别**：默认按 CPU 逻辑核数 ×2 推算（4~16 封顶），网络 IO 密集场景下比固定 5 线程更快；「更多设置」里的说明文字会直接显示本次识别到的线程数。手动改过之后以你的设置为准，选择持久化（`GM_setValue`），刷新后保留。
 
 **下载控制**
 
@@ -59,7 +60,7 @@ A Tampermonkey userscript that downloads DingTalk live replays **without logging
 - **多码率**：遇 `#EXT-X-STREAM-INF` 自动选最高带宽递归。
 - **AES-128**：遇 `#EXT-X-KEY` 用 Web Crypto 拉 key 逐片解密。
 - **fMP4 / BYTERANGE**：支持 `#EXT-X-MAP` 初始化段与 `#EXT-X-BYTERANGE` 字节范围。
-- **并发**（1–16，默认 5）与**重试**（1–10，默认 3，指数退避）。
+- **并发**（1–16，默认自动识别 = CPU 逻辑核数 ×2，手动设置后以设置为准）与**重试**（1–10，默认 3，指数退避）。
 
 ---
 

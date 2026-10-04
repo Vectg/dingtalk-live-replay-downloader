@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      1.9.1
+// @version      1.9.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速/音量)、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1463,12 +1463,14 @@
         // 持久化设置（thread/retry/prefetch/frost/stamp 共用一套读写）
         const bindNum = (id, key, min, max, def) => {
             const el = $(id);
-            try { const v = parseInt(GM_getValue(key), 10); if (v >= min && v <= max) el.value = v; }
-            catch (e) { el.value = def; }
+            let v = NaN;
+            try { v = parseInt(GM_getValue(key), 10); } catch (e) { }
+            // 读不到 / 越界 → 用默认值（自动识别结果）
+            el.value = (v >= min && v <= max) ? v : def;
             el.addEventListener('change', () => {
-                const v = Math.max(min, Math.min(max, parseInt(el.value, 10) || def));
-                el.value = v;
-                try { GM_setValue(key, v); } catch (e) { }
+                const n = Math.max(min, Math.min(max, parseInt(el.value, 10) || def));
+                el.value = n;
+                try { GM_setValue(key, n); } catch (e) { }
             });
         };
         const bindChk = (id, key, def) => {
@@ -1480,8 +1482,17 @@
             });
             return el;
         };
-        bindNum('dlr-thread', 'dlr_thread', 1, 16, 5);
+        // 并发自动识别：网络 IO 密集，按 CPU 逻辑核数 ×2 推算（4~16 封顶）；
+        // 用户手动改过（dlr_thread 已持久化）则以保存值优先
+        const autoThreads = Math.max(4, Math.min(16,
+            (navigator.hardwareConcurrency || 4) * 2));
+        bindNum('dlr-thread', 'dlr_thread', 1, 16, autoThreads);
         bindNum('dlr-retry', 'dlr_retry', 1, 10, 3);
+        const thrTip = document.querySelector('#dlr-more-b .tip');
+        if (thrTip) {
+            thrTip.textContent = '并发已自动识别为 ' + autoThreads +
+                ' 线程（CPU 核心×2，手动修改后以你的设置为准）。预取播放地址与切片索引，打开页面后无需等待即可直接下载。';
+        }
         bindChk('dlr-stamp', 'dlr_stamp', false);
         const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
 
