@@ -152,27 +152,30 @@ section('面板拖拽定位 clampPanelPos / posToRightBottom（v2.4.0）');
     eq(clampPanelPos(100, 100, W, H, VW, VH).x, 100, '区间内 x 原样');
     eq(clampPanelPos(100, 100, W, H, VW, VH).y, 100, '区间内 y 原样');
 
-    // right/bottom 反算自洽，且永不为负
+    // v3.2.1: 只返回 left/top —— 一旦还返回 right/bottom 像素值，applyPos 写进去后
+    // top+bottom 同时存在，CSS 把 shell 高度钉成「视口 − top − bottom」：
+    // 悬浮收起态实测 570px 透明空壳盖住 48px 的横条、把右下角点击全吃掉。
     const p = posToRightBottom(100, 100, W, H, VW, VH);
     eq(p.left, '100px', 'posToRightBottom left');
     eq(p.top, '100px', 'posToRightBottom top');
-    eq(p.right, (VW - 100 - W) + 'px', 'posToRightBottom right 反算正确');
-    eq(p.bottom, '0px', '面板高于视口 → bottom 夹到 0 而非负数');
+    eq(p.right, undefined, 'v3.2.1: 不再返回 right（会把 shell 高度钉成上下间距）');
+    eq(p.bottom, undefined, 'v3.2.1: 不再返回 bottom（同上）');
 
     // 拖到左上角
     const q = posToRightBottom(0, 0, W, H, VW, VH);
     eq(q.left, '8px', 'x<0 → 夹到 gap 后再反算');
-    eq(q.right, (VW - GAP - W) + 'px', '拖到左上角后 right 反算');
+    eq(q.right, undefined, '拖到左上角 → 仍不返回 right（高度交给内容）');
 
     // 幂等：反算结果再拿回坐标，位置不变
     const rt = posToRightBottom(250, 60, W, H, VW, VH);
     eq(parseInt(rt.left, 10), 250, '往返一致 x');
     eq(parseInt(rt.top, 10), 60, '往返一致 y');
 
-    // right/bottom 永远 ≥ 0（负值会让浏览器当成反向偏移，面板瞬移到右上角）
+    // 极端左上位移：left/top 照常钳制，且仍然只给这两个字段
     const neg = posToRightBottom(-500, -500, W, H, VW, VH);
-    eq(neg.right, (VW - GAP - W) + 'px', '极端左上位移 → right 仍正确');
-    eq(neg.bottom, '0px', '极端左上位移 → bottom 不为负');
+    eq(neg.left, '8px', '极端左上位移 → left 仍钳到 gap');
+    eq(neg.right, undefined, '极端左上位移 → 仍不返回 right');
+    eq(neg.bottom, undefined, '极端左上位移 → 仍不返回 bottom');
 }
 
 section('clipTimeHint / normalizeClipText（截取时间单位自动识别 v2.3.0）');

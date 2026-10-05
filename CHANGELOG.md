@@ -30,6 +30,40 @@
        若确实如此, 应把光环动画与下载状态解耦（如空闲时降低帧率）.
   - **约束**: 任何修改都要保持 v3.0.9 已验证的性质 —— 光环贴合**可见面板**（`.body`,
     收缩态用 `.expand`）, 差距 `[-1,-1,2,2]`; 且必须过 `prefers-reduced-motion`.
+## [3.2.1] - 2026-10-05
+
+### 修复
+- **内嵌后看不到下面的功能**: `.bin` 是内容包裹层, 此前 `overflow:hidden` 把超出部分裁死, 而 `.body` 的
+  `scrollHeight == clientHeight`（299 == 299）所以它自己永不滚动 —— 实测内容 530px / 可见 271px,
+  下载按钮被压在可见区下方 91px、更多设置 211px, 用户点不到. 改为 `overflow-y:auto`（横向仍隐藏）
+  并补细滚动条样式, `.bin` 成为真正的滚动区（实测 scrollHeight 496 / clientHeight 237, 可滚 239px,
+  滚到底后下载按钮完整落在可视区内）.
+- **版本/检查更新栏不再需要滚到底**: 页脚原在 `.bin` 内部, 内嵌态实测位于 y=926 而面板底在 705（低 245px）,
+  又因为上一条无法滚动, 等于永远看不见. 现将 `.foot` 移出 `.bin`、作为 `.body` 直接子块, 由 grid
+  钉在面板底部; 实测滚动时页脚位移 Δ=-0.7px（钉住）, 始终在面板内; 收起态 `display:none`, 不留 24px 空条.
+- **悬浮收起态的透明空壳**: `applyPos` 原先把坐标反算成 `right`/`bottom` 像素值一并写入, 于是 top 与
+  bottom 同时存在 —— CSS 对「height:auto + top + bottom」会把 shell 高度钉成「视口 − top − bottom」,
+  实测收起态 shell 高 570px 而内容只有 48px, 一块看不见的大壳子盖住右下角并吃掉那里的点击.
+  `posToRightBottom` 改为只返回 `left/top`, `right/bottom` 写 `auto`; 实测收起态 48px、shell 高度等于
+  内容高度、横条下方 150px 处命中页面元素而非面板.
+
+### 测试
+- 5 条写死旧契约的断言（right/bottom 反算）改为新契约断言, 并在断言名里写明原因; 验收 389 → 390.
+- 浏览器真机验收 (登录态真实回放页 + GM 桩): 内嵌收起 56px / 展开还原 308px、悬浮收起 48px、
+  拖拽位移 -100/-42、`.bin` 可滚且下载按钮滚到底可见、页脚钉住（Δ=-0.7px）、resize 重钳制稳定,
+  `window.__errs` 为 0.
+
+### 排查记录（重要, 别再踩）
+- **后台标签页会冻结 CSS 过渡, 制造假的测量结果**: CDP 下标签未在前台时
+  `document.visibilityState === 'hidden'`, `performance.now()` 照常走, 但所有 CSS 过渡/动画的
+  `currentTime` 冻结在 0 —— 收起态读到的 `grid-template-rows` 永远是起始值, 于是量出「收起后 356px」
+  「悬浮收起 570px」这类**并不存在的高度**, 还差点据此去改产品代码. 判据: `getAnimations()` 里
+  每条都是 `running` 但 `currentTime === 0`, 且 `document.getAnimations()` 同样全为 0.
+  修法: 测量前 `Page.bringToFront` + `Emulation.setFocusEmulationEnabled(enabled:true)`,
+  之后动画立即跑到终点（rows 0px / body 0 / 面板 56px）.
+  **任何涉及过渡动画的验收都必须先确认 `document.visibilityState === 'visible'`.**
+
+
 ## [3.2.0] - 2026-10-05
 
 ### 新增
@@ -689,6 +723,7 @@
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
 [未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...HEAD
+[3.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.9...v3.1.0
 [3.0.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.8...v3.0.9

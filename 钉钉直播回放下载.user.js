@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.2.0
+// @version      3.2.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1048,15 +1048,19 @@
             y: Math.max(gap, y),          // 只保留下边界，顶部不被裁掉
         };
     }
-    // 把 left/top 坐标反算成 CSS 的 right/bottom（面板宽度未知时用当前实测值）
+    // 把 left/top 坐标钳制成可写入的定位值。
+    //
+    // v3.2.1 起**只返回 left/top**：过去还把坐标反算成 right/bottom 像素值一并写入，
+    // 于是 top 和 bottom 同时存在 —— CSS 对「height:auto + top + bottom」会把高度钉成
+    // 「视口高 − top − bottom」，悬浮收起态实测 shell 高 570px 而内容只有 48px，
+    // 一块看不见的大壳子盖住右下角、把点击全吃掉。改成只锚定 left/top 后，
+    // shell 高度始终等于内容高度；窗口缩放仍由 resize 里按 lastPos 重跑 applyPos
+    // 兜住（v3.0.3 的钳制逻辑不变，只夹 x 不夹 y 的策略也不变）。
     function posToRightBottom(x, y, w, h, vw, vh) {
         const c = clampPanelPos(x, y, w, h, vw, vh);
         return {
             left: c.x + 'px',
             top: c.y + 'px',
-            // right/bottom 允许为 0：面板超出视口时本就没有"到右边的距离"
-            right: Math.max(0, vw - c.x - w) + 'px',
-            bottom: Math.max(0, vh - c.y - h) + 'px',
         };
     }
 
@@ -1369,7 +1373,14 @@
                 border-radius 280ms cubic-bezier(0.16,1,0.3,1),
                 width 280ms cubic-bezier(0.16,1,0.3,1)}
         /* 内容包裹层：grid-template-rows 从 1fr → 0fr 才能把 auto 高度平滑补间到 0 */
-        #dlr-panel .bin{overflow:hidden;min-height:0;min-width:0}
+        /* v3.2.1: .bin 是真正的滚动区 —— 之前 overflow:hidden 把内容裁死
+           (实测内容 530px / 可见 271px, 而 .body 的 scrollHeight==clientHeight 永不滚动),
+           下载按钮被压到可见区下方 91px、更多设置 211px, 用户点不到 → 改 overflow-y:auto
+           让滚轮直接生效. overflow-x 仍隐藏, 横向不许出滚动条. */
+        #dlr-panel .bin{overflow-x:hidden;overflow-y:auto;min-height:0;min-width:0;scrollbar-width:thin}
+        #dlr-panel .bin::-webkit-scrollbar{width:6px}
+        #dlr-panel .bin::-webkit-scrollbar-thumb{background:#3a3f4b;border-radius:3px}
+        #dlr-panel .bin::-webkit-scrollbar-track{background:transparent}
         /* 拖拽把手（v2.4.0）：标题区整块可拖，光标变 move 表示可拖。
            user-select:none 是关键——否则拖动会顺带选中标题文字，手感很脏。
            touch-action:none 让触屏/触控笔也能拖，而不是触发页面滚动。 */
@@ -1514,6 +1525,8 @@
         #dlr-panel .grid2>.chk>input{flex:0 0 auto}
         /* 收缩态：横向长条——上面是名字，下面是进度条（解析蓝 / 下载绿） */
         #dlr-panel.mini{width:230px;padding:0;border-radius:12px}
+        /* 底栏钉在 .body 后 (移出 .bin), 收起态必须整体隐藏, 否则 0fr 之上留 24px 幽灵条 */
+        #dlr-panel.mini .foot{display:none}
         #dlr-panel.mini .body{width:230px;border-radius:12px;
             background:rgba(22,24,29,.85);
             grid-template-rows:0fr;opacity:0;padding:0;border-width:0;pointer-events:none}
@@ -1718,13 +1731,13 @@
                 <div class="tip">预取播放地址与切片索引, 打开页面后无需等待即可直接下载.</div>
             </div></div>
         </div>
+        </div>
         <div class="foot">
             <span>v<span id="dlr-ver">--</span></span>
             <span id="dlr-update" title="检查更新; 发现新版后点击跳转下载页">检查更新</span>
             <span style="color:#3a3f4b">|</span>
             <span>By</span>
             <a href="https://github.com/Vectg" target="_blank" rel="noopener noreferrer">@Vectg</a>
-        </div>
         </div>
         </div>
     `;
@@ -3599,8 +3612,11 @@
             const p = posToRightBottom(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
             panel.style.left = p.left;
             panel.style.top = p.top;
-            panel.style.right = p.right;
-            panel.style.bottom = p.bottom;
+            // v3.2.1: right/bottom 写 'auto' 而不是像素值 —— top+bottom 同时存在会把
+            // shell 高度钉成上下间距（悬浮收起态实测 570px 空壳）。只锚定 left/top，
+            // 高度交还给内容；inline 'auto' 同时压过样式表默认的 right:16/bottom:16。
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
             // 记下**钳制后**的坐标：下一轮 resize 要以它为基准，否则误差会逐次累积
             lastPos = { x: parseFloat(p.left) || 0, y: parseFloat(p.top) || 0 };
             // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上。
