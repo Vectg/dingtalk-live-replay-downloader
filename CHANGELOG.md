@@ -7,8 +7,6 @@
 
 ### 后续计划（3.0.0 之后）
 
-- **内嵌播放器**: 把播放器嵌进钉钉页面自带播放器位置（默认关闭）. 需先确认钉钉回放页在
-  未登录 / 可见权限两种情况下的真实 DOM 结构, 否则只能猜 class 名, 一改版就失效.
 - **推送到下载器**: aria2 RPC 等本地下载器集成.
 - **视口自适应深度优化**: 已于 3.0.3 补齐 —— 窗口缩放后会重新钳制面板位置, 不再出现
   「拖到边缘后缩窗, 面板跑出屏幕且无法拖回」. 高度上限本就用 CSS `calc(100vh - 140px)`,
@@ -32,6 +30,39 @@
        若确实如此, 应把光环动画与下载状态解耦（如空闲时降低帧率）.
   - **约束**: 任何修改都要保持 v3.0.9 已验证的性质 —— 光环贴合**可见面板**（`.body`,
     收缩态用 `.expand`）, 差距 `[-1,-1,2,2]`; 且必须过 `prefers-reduced-motion`.
+## [3.1.0] - 2026-10-05
+
+### 新增
+- **内嵌播放器预览（实验性, 默认关闭）**: 更多设置里新增「内嵌播放器(实验性)」开关. 开启后
+  MP4 下载完成的预览不再挤在面板小窗, 而是铺满钉钉自带播放器的槽位 (实测 1002×564).
+  预览框用 CSS `left/top/right/bottom:0` 贴合, 窗口缩放自动跟随 —— 不做 JS 几何同步
+  (v3.0.9 的教训: 能让 CSS 拥有几何就别用 JS 追). 打开预览时暂停原生播放, 避免两条音轨叠加;
+  关闭预览时按打开前记录的现场恢复原生播放. 连续两次内嵌共用同一份暂停现场, 第二次不会把
+  「原来是否在播」覆盖掉.
+- **两个内嵌位置, 预览内实时切换**: 预览右上角新增「位置」下拉, 「播放器 / 互动·简介侧栏」
+  随时切换并记住 (GM `dlr_embed_slot`), 下次预览沿用上次的位置. 侧栏位铺满右侧互动·简介列
+  (实测 320×632, `position:relative`, 同样 `inset:0` 贴合, 实测偏差 0,0,0,0); 侧栏没有稳定 id,
+  所以按结构定位 —— `#live-room` 的子列里不含播放器、且带「互动/简介」页签文本的那一列,
+  找不到就换另一个位置, 都没有才退回面板内预览. 原生 video 始终从播放器槽位取,
+  否则侧栏位下暂停/恢复会失灵.
+- **锚点只认页面稳定 id**: 优先 `#ding_live_player`, 兜底 `#J_player`, 都没有 (未登录页
+  播放器不挂载) 就退回面板内预览. 绝不碰 `_903bde0b01` 这类 CSS-module 哈希 class ——
+  每次发版都会变. DOM 结构取自 2026-10-05 登录态实测, 全是 light DOM, 无 shadow root.
+- 浮条: 预览框右上角给 位置 + 文件名 + 倍速 (0.5×–2×) + 关闭按钮, `textContent` 构建,
+  不走 `innerHTML`. z-index 只压过页面内容, 不越过面板自身的 999999, 面板拖到播放器上方仍可点.
+
+### 修复
+- 换场/换槽时上一条预览的 blob URL 未吊销, 连续挂载会泄漏 (随版发布).
+
+### 测试
+- `embedAnchor` 抽出后跑 12 条断言 (播放器位优先级 / 缺主锚点兜底 / 全缺返回 null /
+  side 位取列规则 / 无页签文本不猜 class / 无 `#live-room` 返回 null),
+  验收总数 381 → 393.
+- 浏览器端真机验收 (登录态真实回放页 + GM 桩 + ffmpeg 生成的 6 段真 TS 夹具):
+  五个场景全绿 —— A 播放器位 (几何偏差 0,0,0,0) / S 实时切侧栏 (0,0,0,0) /
+  C 关闭后原生恢复播放 / B 关开关回退面板预览 / F 侧栏被移除时回退播放器位;
+  预览帧 canvas 采样 4773/4800 彩色像素, 证明 mux.js 转出的 MP4 真的能解码出画面.
+
 ## [3.0.9] - 2026-10-04
 
 ### 修复
@@ -637,50 +668,58 @@
 1.6.3 不存在——该版本号被一次未 bump 的提交占用,修复落在 1.6.4.
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.1.HEAD
-[3.0.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.0.v3.0.1
-[3.0.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.9.0.v3.0.0
-[2.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0.v2.9.0
-[2.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3.v2.7.0
-[2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2.v2.6.3
-[2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1.v2.6.2
-[2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0.v2.6.1
-[2.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0.v2.6.0
-[2.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0.v2.5.0
-[2.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0.v2.4.0
-[2.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1.v2.3.0
-[2.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.0.v2.2.1
-[2.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.1.0.v2.2.0
-[2.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.0.0.v2.1.0
-[2.0.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.12.v2.0.0
-[1.9.12]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.11.v1.9.12
-[1.9.11]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.10.v1.9.11
-[1.9.10]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.9.v1.9.10
-[1.9.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.8.v1.9.9
-[1.9.8]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.7.v1.9.8
-[1.9.7]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.6.v1.9.7
-[1.9.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.5.v1.9.6
-[1.9.5]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.4.v1.9.5
-[1.9.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.3.v1.9.4
-[1.9.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.2.v1.9.3
-[1.9.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.1.v1.9.2
-[1.9.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.0.v1.9.1
-[1.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.8.1.v1.9.0
-[1.8.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.8.0.v1.8.1
-[1.8.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.2.v1.8.0
-[1.7.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.1.v1.7.2
-[1.7.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.0.v1.7.1
-[1.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.9.v1.7.0
-[1.6.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.8.v1.6.9
-[1.6.8]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.7.v1.6.8
-[1.6.7]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.6.v1.6.7
-[1.6.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.5.v1.6.6
-[1.6.5]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.4.v1.6.5
-[1.6.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.2.v1.6.4
-[1.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.1.v1.6.2
-[1.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.0.v1.6.1
-[1.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.4.0.v1.6.0
-[1.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.3.1.v1.4.0
-[1.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.3.0.v1.3.1
-[1.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.2.0.v1.3.0
-[1.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/4bbb374.v1.2.0
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.9...v3.1.0
+[3.0.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.8...v3.0.9
+[3.0.8]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.7...v3.0.8
+[3.0.7]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.6...v3.0.7
+[3.0.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.5...v3.0.6
+[3.0.5]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.3...v3.0.5
+[3.0.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.2...v3.0.3
+[3.0.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.1...v3.0.2
+[3.0.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.9.0...v3.0.0
+[2.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.7.0...v2.9.0
+[2.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.3...v2.7.0
+[2.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.2...v2.6.3
+[2.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.1...v2.6.2
+[2.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.5.0...v2.6.0
+[2.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.2.0...v2.2.1
+[2.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.12...v2.0.0
+[1.9.12]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.11...v1.9.12
+[1.9.11]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.10...v1.9.11
+[1.9.10]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.9...v1.9.10
+[1.9.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.8...v1.9.9
+[1.9.8]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.7...v1.9.8
+[1.9.7]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.6...v1.9.7
+[1.9.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.5...v1.9.6
+[1.9.5]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.4...v1.9.5
+[1.9.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.3...v1.9.4
+[1.9.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.2...v1.9.3
+[1.9.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.1...v1.9.2
+[1.9.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.8.1...v1.9.0
+[1.8.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.2...v1.8.0
+[1.7.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.1...v1.7.2
+[1.7.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.9...v1.7.0
+[1.6.9]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.8...v1.6.9
+[1.6.8]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.7...v1.6.8
+[1.6.7]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.6...v1.6.7
+[1.6.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.5...v1.6.6
+[1.6.5]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.4...v1.6.5
+[1.6.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.2...v1.6.4
+[1.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.4.0...v1.6.0
+[1.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/4bbb374...v1.2.0

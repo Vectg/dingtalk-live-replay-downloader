@@ -29,7 +29,8 @@ section('extract（抽取器自检）');
     // 配平：抽出的源码花括号必须闭合，且能被 Function 构造器编译
     for (const name of ['sanitize', 'fmtBytes', 'parseTimeArg', 'clipSegments',
         'parseAttributes', 'fetchAndParseM3u8', 'fixMp4Duration', 'parseSpsToDims',
-        'findSpsCandidates', 'boxIter', 'mergeBuffers', 'parseUrl']) {
+        'findSpsCandidates', 'boxIter', 'mergeBuffers', 'parseUrl',
+        'embedAnchor']) {
         let code = '';
         try {
             code = extractFn(name);
@@ -1141,6 +1142,41 @@ section('智能调度');
     eq([st.min, st.max], [1, 8], 'stats 含区间');
     eq(st.lastSpeed, 12345, 'stats 含最近速度');
 }
+    section('内嵌播放器锚点 embedAnchor（v3.1.0）');
+    {
+        const { embedAnchor } = loadFns(['embedAnchor']);
+        const mk = (ids) => ({ getElementById: (id) => (ids.indexOf(id) >= 0 ? { id: id } : null) });
+        eq(embedAnchor(mk(['ding_live_player'])).id, 'ding_live_player', '优先 ding_live_player');
+        eq(embedAnchor(mk(['J_player'])).id, 'J_player', '缺主锚点 → J_player 兜底');
+        eq(embedAnchor(mk(['J_player', 'ding_live_player'])).id, 'ding_live_player', '两者都在 → 取 ding_live_player');
+        eq(embedAnchor(mk(['Root'])), null, '都没有 → null（未登录页退回面板内预览）');
+        eq(embedAnchor(mk([])), null, '空页面 → null');
+        eq(embedAnchor(mk(['ding_live_player']), 'player').id, 'ding_live_player', "slot='player' 显式指定同默认");
+
+        // slot='side'：#live-room 的子列里，不含播放器且带「互动/简介」文本的那一列
+        const col = (name, hasPlayer, text) => ({
+            name, textContent: text, children: [],
+            contains: () => hasPlayer,
+        });
+        const playerCol = col('playerCol', true, '简介互动');   // 含播放器 → 跳过
+        const sideCol = col('sideCol', false, '互动 简介 AI听记');
+        const mkRoom = (children, ids) => ({
+            getElementById: (id) => {
+                if (id === 'live-room') return { id: 'live-room', children };
+                if (ids && ids.indexOf(id) >= 0) return { id };
+                return null;
+            },
+        });
+        const roomBoth = mkRoom([playerCol, sideCol], ['ding_live_player']);
+        eq(embedAnchor(roomBoth, 'side').name, 'sideCol', "side: 跳过播放器列, 取带页签文本的列");
+        eq(embedAnchor(mkRoom([playerCol], ['ding_live_player']), 'side'), null, 'side: 只有播放器列 → null');
+        eq(embedAnchor(mkRoom([col('a', false, '无关文本'), col('b', false, '还是无关')], []), 'side'), null,
+            'side: 没有「互动/简介」文本 → null（不猜哈希 class）');
+        eq(embedAnchor(mkRoom([col('only', false, '简介')], []), 'side').name, 'only',
+            'side: 播放器缺失时按文本取列');
+        eq(embedAnchor({ getElementById: () => null }, 'side'), null, 'side: 无 #live-room → null');
+        eq(embedAnchor(mk(['ding_live_player']), undefined).id, 'ding_live_player', '不传 slot = 默认 player');
+    }
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

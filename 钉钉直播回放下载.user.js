@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.0.9
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      3.1.0
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、内嵌播放器预览(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -1462,6 +1462,24 @@
             border-radius:5px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.4;margin:0}
         #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
         #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
+        /* 内嵌播放器预览 (v3.1.0, 实验性): 铺满钉钉播放器槽位.
+           槽位 #ding_live_player 实测 relative + overflow:hidden 且与 video 同几何,
+           所以 inset:0 贴合, 窗口缩放由 CSS 自动跟随 —— 无 JS 几何同步
+           (v3.0.9 教训: 能让 CSS 拥有几何就别用 JS 追). z-index 只压过页面内容,
+           不越过面板自身的 999999, 面板拖到播放器上方时仍是面板可点. */
+        #dlr-embed-box{position:absolute;left:0;top:0;right:0;bottom:0;z-index:20;
+            background:#000;display:flex}
+        #dlr-embed-box video{flex:1;min-width:0;min-height:0;width:100%;height:100%;
+            object-fit:contain;background:#000;display:block}
+        #dlr-embed-box .ebar{position:absolute;top:6px;right:6px;z-index:2;display:flex;
+            gap:6px;align-items:center;background:rgba(0,0,0,.55);border-radius:6px;
+            padding:3px 6px;max-width:calc(100% - 12px)}
+        #dlr-embed-box .ename{color:#c9cdd6;font-size:11px;overflow:hidden;
+            text-overflow:ellipsis;white-space:nowrap;max-width:240px}
+        #dlr-embed-box .ebar select{background:#23262e;color:#c9cdd6;border:1px solid #3a3f4b;
+            border-radius:5px;font-size:11px;padding:1px 4px;margin:0}
+        #dlr-embed-box .px{background:rgba(255,255,255,.12);color:#fff;border:0;
+            border-radius:5px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.4;margin:0}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
         /* 更多设置：可折叠小面板 */
         #dlr-panel .more-toggle{display:flex;align-items:center;justify-content:space-between;
@@ -1722,6 +1740,8 @@
                     <label class="chk" title="下载结束(成功保存或失败报错)时弹出系统通知, 点击可回到面板. 默认关闭.">
                         <input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
                     <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
+                    <label class="chk" title="实验性, 默认关闭. 开启后下载完成的 MP4 预览铺满钉钉播放器位置(随窗口缩放自适应), 预览右上角可切换「播放器 / 互动·简介侧栏」两个位置, 并暂停原生播放避免双音轨, 关闭预览即恢复. 页面上找不到播放器时(如未登录)自动退回面板内预览.">
+                        <input type="checkbox" id="dlr-embed">内嵌播放器(实验性)</label>
                 </div>
                 <div class="tip">预取播放地址与切片索引, 打开页面后无需等待即可直接下载.</div>
             </div></div>
@@ -1747,10 +1767,159 @@
         return { roomId, liveUuid };
     }
 
+    // ---------- 内嵌播放器锚点 (v3.1.0, 实验性) ----------
+    // 只认页面稳定 id 与结构 (实测 2026-10-05, 登录态):
+    //   slot='player' (默认): #ding_live_player 相对定位且 overflow:hidden, 与 video
+    //     同几何 (1002x564); #J_player 是 prism-player 根, 同几何兜底.
+    //   slot='side': 右侧「互动/简介」侧栏列 —— #live-room(稳定 id)的子列里, 不包含
+    //     播放器、且带「互动/简介」页签文本的那一列 (实测 320x632, position:relative,
+    //     可直接 inset:0). 侧栏没有稳定 id, 所以按结构 + 文本特征定位, 不猜 class.
+    // 找不到 → 返回 null, 调用方退回面板内预览 (未登录页播放器不挂载也走这条).
+    // 绝不碰 _903bde0b01 / _7da30f0d4c 这类 CSS-module 哈希 class: 每次发版都会变.
+    function embedAnchor(doc, slot) {
+        const d = doc || document;
+        if (slot === 'side') {
+            const lr = d.getElementById('live-room');
+            if (!lr || !lr.children) return null;
+            const player = d.getElementById('ding_live_player') || d.getElementById('J_player');
+            for (let i = 0; i < lr.children.length; i++) {
+                const col = lr.children[i];
+                if (player && col.contains && col.contains(player)) continue;   // 播放器列跳过
+                if (col.textContent && /互动|简介/.test(col.textContent)) return col;
+            }
+            return null;
+        }
+        return d.getElementById('ding_live_player') || d.getElementById('J_player') || null;
+    }
+
+    // 原生 video 永远从「播放器槽位」里找: 侧栏槽位下 anchor.querySelector 抓不到它,
+    // 暂停/恢复就会失灵. 跳过我们自己的 #dlr-embed-box 里的 video, 免得把预览当原生.
+    function nativeVideoInPlayer() {
+        const pa = embedAnchor(document, 'player');
+        if (!pa) return null;
+        const vids = pa.querySelectorAll('video');
+        for (let i = 0; i < vids.length; i++) {
+            if (!vids[i].closest || !vids[i].closest('#dlr-embed-box')) return vids[i];
+        }
+        return null;
+    }
+
+    // 内嵌预览的现场: 暂停记录(关闭时恢复原生播放) + 当前 blob/名字/槽位(换槽时复用).
+    // 连续两次内嵌共用同一份 was, 否则第二次会覆盖成 false, 关闭后原生播放回不来.
+    let embedState = { nv: null, was: false, blob: null, name: '', slot: 'player' };
+
+    function showPreviewEmbed(anchor, blob, name, slot) {
+        const old = document.getElementById('dlr-embed-box');
+        if (old) {
+            // 换场/换槽时先吊销旧 blob, 否则连续挂载会泄漏 URL
+            const ov = old.querySelector('video');
+            if (ov && ov.src) { try { URL.revokeObjectURL(ov.src); } catch (e) { } }
+            try { old.remove(); } catch (e) { }
+        }
+        // 原生 video 必须在插入我们的 video 之前定好, 否则可能抓到自己
+        const nv = nativeVideoInPlayer();
+        if (embedState.nv !== nv) embedState = { nv: nv, was: !!(nv && !nv.paused), blob: null, name: '', slot: slot };
+        else embedState.slot = slot;
+        if (nv && !nv.paused) { try { nv.pause(); } catch (e) { } }
+        embedState.blob = blob;
+        embedState.name = name;
+        const wrap = document.createElement('div');
+        wrap.id = 'dlr-embed-box';
+        const v = document.createElement('video');
+        v.src = URL.createObjectURL(blob);
+        v.controls = true;
+        wrap.appendChild(v);
+        const bar = document.createElement('div');
+        bar.className = 'ebar';
+        const cap = document.createElement('span');
+        cap.className = 'ename';
+        cap.textContent = '预览:' + name;
+        bar.appendChild(cap);
+        // 位置: 播放器 / 互动·简介侧栏, 实时换槽 (v3.1.0). 找不到目标就留在原地并说明.
+        const slotSel = document.createElement('select');
+        slotSel.title = '内嵌位置';
+        [['player', '播放器'], ['side', '互动/简介侧栏']].forEach((pair) => {
+            const o = document.createElement('option');
+            o.value = pair[0];
+            o.textContent = pair[1];
+            slotSel.appendChild(o);
+        });
+        slotSel.value = slot;
+        slotSel.addEventListener('change', () => {
+            const next = slotSel.value;
+            const target = embedAnchor(document, next);
+            if (!target) {
+                slotSel.value = embedState.slot;
+                appendLog('页面上找不到「' + (next === 'side' ? '互动/简介侧栏' : '播放器') + '」, 保持原位置');
+                return;
+            }
+            try { GM_setValue('dlr_embed_slot', next); } catch (e) { }
+            appendLog('内嵌位置已切换到「' + (next === 'side' ? '互动/简介侧栏' : '播放器') + '」');
+            showPreviewEmbed(target, embedState.blob, embedState.name, next);
+        });
+        bar.appendChild(slotSel);
+        const sp = document.createElement('select');
+        sp.title = '倍速';
+        [0.5, 0.75, 1, 1.25, 1.5, 2].forEach((r) => {
+            const o = document.createElement('option');
+            o.value = String(r);
+            o.textContent = r + '×';
+            if (r === 1) o.selected = true;
+            sp.appendChild(o);
+        });
+        sp.addEventListener('change', () => { v.playbackRate = parseFloat(sp.value); });
+        bar.appendChild(sp);
+        const close = document.createElement('button');
+        close.className = 'px';
+        close.textContent = '✕';
+        close.title = '关闭预览';
+        close.addEventListener('click', () => {
+            try { URL.revokeObjectURL(v.src); } catch (e) { }
+            wrap.remove();
+            const was = embedState.was;
+            if (embedState.nv && was) {
+                try { const p = embedState.nv.play(); if (p && p.catch) p.catch(() => { }); } catch (e) { }
+            }
+            embedState = { nv: null, was: false, blob: null, name: '', slot: embedState.slot };
+            appendLog('内嵌预览已关闭' + (was ? ', 原生播放已恢复' : ''));
+        });
+        bar.appendChild(close);
+        wrap.appendChild(bar);
+        anchor.appendChild(wrap);
+        appendLog('预览已内嵌到' + (slot === 'side' ? '互动/简介侧栏' : '播放器位置') +
+            ' (实验性, 右上角可换位置, 更多设置里可关)');
+    }
+
     // ---------- 内置预览（倍速 / 音量） ----------
     function showPreview(blob, name) {
         let box = $('dlr-preview');
         if (!box) return;
+        // v3.1.0: 内嵌播放器预览 (实验性). 开着 → 按上次选择的槽位挂载 (播放器/侧栏),
+        // 首选槽位不在就试另一个, 都没有 (未登录页) → 原路径, 行为不变.
+        let emb = null;
+        try { emb = document.getElementById('dlr-embed'); } catch (e) { }
+        let slot = 'player';
+        try { slot = (GM_getValue('dlr_embed_slot', 'player') === 'side') ? 'side' : 'player'; } catch (e) { }
+        let anchor = null, useSlot = null;
+        if (emb && emb.checked) {
+            anchor = embedAnchor(document, slot);
+            useSlot = slot;
+            if (!anchor) {
+                const alt = (slot === 'side') ? 'player' : 'side';
+                anchor = embedAnchor(document, alt);
+                useSlot = anchor ? alt : null;
+            }
+        }
+        if (anchor) {
+            const oldV = box.querySelector('video');
+            if (oldV && oldV.src) { try { URL.revokeObjectURL(oldV.src); } catch (e) { } }
+            box.innerHTML = '';
+            box.classList.remove('show');
+            box.style.opacity = '0';
+            box.style.height = '0px';
+            showPreviewEmbed(anchor, blob, name, useSlot);
+            return;
+        }
         box.innerHTML = '';
         const holder = document.createElement('div');
         holder.className = 'ph';
@@ -3065,6 +3234,9 @@
         // 解析阶段后台预下载（v2.7.0）：默认开。开启后打开页面即在后台拉切片，
         // 用户点「下载」时几乎瞬间完成。关掉则行为与 2.6.x 完全一致。
         bindChk('dlr-predownload', 'dlr_predownload', true);
+        // 内嵌播放器预览 (v3.1.0, 实验性): 默认关. 开关状态只决定 showPreview 走哪条
+        // 渲染分支, 锚点缺失时无论如何都退回面板内预览, 不碰下载状态机.
+        bindChk('dlr-embed', 'dlr_embed', false);
 
         // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下。
         // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。

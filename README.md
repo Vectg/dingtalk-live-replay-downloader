@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.0.9）
+## 功能（v3.1.0）
 
 **核心**
 
@@ -56,6 +56,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **自定义文件名**：面板可直接填写输出文件名，**留空则自动使用回放标题**（placeholder 即回放标题）；误带的 `.mp4`/`.ts` 后缀会自动去掉。勾选「文件名加时间戳」后，placeholder 自动追加 `_时间戳` 且每秒刷新。
 - **截取时长（v2.3.0 起自动识别单位）**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。**时间框不再预设格式**——解析出回放总时长后自动告诉你上限：总时长不足 1 小时给 `mm:ss`，达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`），框内灰字提示随总时长实时变化。**失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复。两段写法（如 `1:30`）不做猜测性改写——它在 `mm:ss` 与 `hh:mm` 之间天然歧义，一律按 `mm:ss` 解析并在超限时给出可用写法。结束超出总时长自动截到末尾并提示。
 - **内置预览**：MP4 下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
+- **内嵌播放器预览（v3.1.0, 实验性, 默认关）**：更多设置里开启后, MP4 下载完成的预览不再挤在面板小窗, 而是铺满钉钉自带播放器的位置（实测 1002×564, 窗口缩放由 CSS `inset:0` 自动跟随, 无 JS 追踪）, 同时自动暂停原生播放避免两条音轨叠加, 关闭预览即恢复. **预览右上角可在「播放器 / 互动·简介侧栏」两个位置间实时切换**：播放器位铺满视频区, 侧栏位铺满右侧互动·简介列（实测 320×632, 按 `#live-room` 的结构加「互动/简介」页签文本定位, 不碰随发版变化的哈希 class）, 选择会记住、下次沿用, 首选位置不在时自动换另一个, 都没有才退回面板内预览. 锚点只认页面稳定 id（`#ding_live_player`, 兜底 `#J_player`）, 播放器不存在时（如未登录）自动退回面板内预览, 下载流程完全不受影响.
 - **文件名加时间戳**。
 
 **面板外观**
@@ -180,7 +181,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.0.9)
+## Features (v3.1.0)
 
 **Core**
 
@@ -225,6 +226,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 - **Clip range (unit auto-detected since v2.3.0)**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired as before. A two-part value (`1:30`) is never rewritten on a guess — it is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` and out-of-range input reports a usable form. An end past the total duration is clamped to the end with a note.
 - **Built-in preview**: after an MP4 finishes downloading, a player appears in the panel with **speed** (0.5×–2×) control. Playback speed affects the preview only, never the saved file — see Known limitations.
+- **Embedded player preview (v3.1.0, experimental, off by default)**: with the switch on in 更多设置, the MP4 preview after a download fills the DingTalk player's own slot (measured 1002×564, tracked by CSS `inset:0` with no JS geometry sync) instead of the small in-panel window, and the native player is paused while it plays so two audio tracks never stack — closing the preview resumes playback. **The preview's top-right bar switches live between two slots: 播放器 (player) and 互动/简介 (side column)** — the side slot fills the right-hand 互动/简介 column (measured 320×632, located structurally from `#live-room` plus the 互动/简介 tab text, never by the hashed classes that change every deploy); the choice is remembered for the next preview, and if the preferred slot is missing the other one is tried before falling back to the in-panel window. The anchors only trust stable page ids (`#ding_live_player`, falling back to `#J_player`); with no player mounted (e.g. not logged in) it falls back to the in-panel preview. The download flow is untouched.
 - **Filename timestamp**: append `_YYYYMMDD-HHmmss`.
 
 **Panel appearance**
