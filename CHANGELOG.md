@@ -30,6 +30,37 @@
        若确实如此, 应把光环动画与下载状态解耦（如空闲时降低帧率）.
   - **约束**: 任何修改都要保持 v3.0.9 已验证的性质 —— 光环贴合**可见面板**（`.body`,
     收缩态用 `.expand`）, 差距 `[-1,-1,2,2]`; 且必须过 `prefers-reduced-motion`.
+## [3.4.0] - 2026-10-05
+
+### 新增
+- **内嵌高度可拉伸**: 面板内嵌后底边出现把手, 上下拖动调整高度 (默认 430px)。上限按「页签条以下到列底」
+  实测 581px, 窗口缩小时自动收进可用范围, 高度持久化 (`dlr_dock_h`)。收起成横条时把手隐藏。
+- **队列框的文字永远读得完**: 你要的「不能缩小到盖住所有文字」落在队列输入框自身 —— 给它
+  `min-height:42px` 兜底(手动 resize 也拖不到更小), `overflow-y:auto` 让多行链接在框内滚动。
+  实测依据: 20px 高时 scrollHeight 48 > clientHeight 19, 文字被静默藏起来。
+- **「下载交给 aria2」总开关 (实验性, 默认关闭)**: 打开后**所有**下载任务交给本机 aria2 ——
+  「下载本页回放」与队列里的每个回放都一样, 面板只解析并逐条 `addUri`, 浏览器内的切片下载/拼接/保存
+  全部跳过; 关闭时行为完全不变。按钮路径与总开关共用 `aria2PushAll`, 不复制逻辑。
+
+### 修复 (两个真 bug, 都是浏览器验收抓出来的)
+- **收起态面板吃满整条侧栏 (629px)**: 内嵌高度的第一版把 `min-height:318px` 写在 `.body` 上,
+  而收起态 `.body` 是 `grid-template-rows:0fr`, min-height 直接把它顶开, 叠加 `max-height:none`
+  后面板占满侧栏。现在下限只落在**队列框自身**, 面板高度一律由 `--dlr-dock-h` 表达, 收起时
+  `height:auto` 且把手隐藏; 实测收起回到 56px、展开还原 438px。
+- **开启总开关后每次下载都报「aria2 配置尚未初始化」**: `run()` 里写了
+  `typeof arConfig === 'function'`, 但 `arConfig` 是 `init()` 内的局部 const, `run()` 根本看不到它,
+  判定永远为假。配置读取已提到模块级 `aria2Config()`, 面板 UI 与 `run()` 共用同一份。
+- 另一处同源错误: gate 最初插在 `const { model, parsed } = ...` 之前, 引用了尚未初始化的 `parsed`,
+  报 `Cannot access 'parsed' before initialization`; 现已移到解构之后。
+
+### 测试
+- 浏览器真机验收 (登录态真实回放页 + GM 桩): 收起 56px 且下方留白 400px+ (不再沾满侧栏)、
+  拖动上限 581px 正好贴侧栏底、拖到下限 346px 时标题与下载按钮仍在可视区、队列框 42px 兜底、
+  aria2 总开关开启后 1 次 `system.multicall` 推送 6 条 `addUri` (token 在 `params[0]`、out/dir/header 齐全)
+  且**浏览器内下载 0 次**、日志给出 ffmpeg 合成命令, `window.__errs` 为 0.
+- 单测 445/445 不变 (本版未新增纯函数)。
+
+
 ## [3.3.1] - 2026-10-05
 
 ### 新增
@@ -762,6 +793,7 @@
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
 [未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
+[3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1
 [3.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...v3.2.0

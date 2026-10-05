@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.3.1
+// @version      3.4.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1505,7 +1505,12 @@
         #dlr-panel.docked .mrow{margin-top:2px;gap:6px}
         #dlr-panel.docked .more-body .mrow,#dlr-panel.docked .more-body .grid2{margin-top:2px}
         #dlr-panel.docked .more-toggle{font-size:11px;padding:1px 0}
-        #dlr-panel.docked #dlr-queue{height:20px;min-height:20px;line-height:1.3}
+        /* 队列框 (粘贴链接那个框) 的文字必须始终读得完 —— 它是固定高度输入框,
+           不随面板被压小; min-height 让用户自己 resize:vertical 也拖不到更小,
+           overflow-y:auto 让多行链接滚动显示而不是被静默裁掉。
+           实测: 20px 高时 scrollHeight 48 > clientHeight 19 (文字被藏)。 */
+        #dlr-panel.docked #dlr-queue{height:42px;min-height:42px;line-height:18px;
+            padding:2px 5px;overflow-y:auto}
         /* aria2 区块实测占 172px (更多设置 373px 里最大的一块), 说明文字就吃掉 39px.
            内嵌态压到约 100px: 行更紧凑 + 说明限高两行. */
         #dlr-panel.docked #dlr-aria2-box{margin:3px 0;padding:3px 5px}
@@ -1515,6 +1520,28 @@
         #dlr-panel.docked #dlr-aria2-box button{margin-top:2px;padding:2px 6px}
         #dlr-panel.docked #dlr-aria2-state{font-size:10px;min-height:12px;margin-top:1px}
         #dlr-panel.docked label{min-width:56px;font-size:11px}
+        /* ---------- 内嵌态可拉伸高度 (v3.4.0) ----------
+           页签条下可用空间实测 581px (侧栏列 632 - 页签条 50), 面板默认 430px。
+           底边把手拖动改高度, 由 --dlr-dock-h 表达; JS 只负责夹进 [下限, 可用空间]。
+           收起态 (.mini) 完全绕开: .body 此时是 grid-template-rows:0fr + opacity:0,
+           高度本就为 0, 所以收起时 height:auto、把手隐藏, 不留任何能顶开它的约束。
+
+           「不能缩小到看不见文字」这条**只约束队列框自身**, 不是约束整个面板:
+           面板变矮时 .bin 照常滚动, 而队列框是固定高度输入框, 它的文字必须始终可读
+           —— 见下面 #dlr-queue 的 min-height。 */
+        #dlr-panel.docked .body{height:var(--dlr-dock-h, 430px);max-height:none;min-height:0}
+        /* .bin 只做滚动, 不加 min-height: min-height 加在滚动容器上既不能保证
+           文字可见 (可见性由元素自身高度决定), 又会和 .body 的固定高度打架 ——
+           收起态 0fr 被顶开后面板实测高达 629px、直接吃满整条侧栏。 */
+        #dlr-panel.docked .bin{max-height:none}
+        #dlr-panel.docked.mini .body{height:auto;max-height:none;min-height:0}
+        #dlr-dock-resize{position:absolute;left:0;right:0;bottom:-5px;height:10px;
+            cursor:ns-resize;z-index:6;touch-action:none;user-select:none;-webkit-user-select:none}
+        #dlr-dock-resize::after{content:'';position:absolute;left:50%;bottom:2px;
+            transform:translateX(-50%);width:34px;height:3px;border-radius:2px;
+            background:#4a5160;transition:background 150ms ease}
+        #dlr-dock-resize:hover::after{background:#3d6eff}
+        #dlr-panel.docked.mini #dlr-dock-resize{display:none}
         #dlr-panel.docked.mini .body{width:100%}
         /* aria2 区块 (v3.3.0, 实验性): 主机/端口/密钥/目录 + 状态行 + 测试按钮 */
         #dlr-aria2-box{margin:6px 0;padding:6px 8px;border:1px solid #23262e;border-radius:6px}
@@ -1698,6 +1725,7 @@
         <div class="body">
         <button class="collapse" title="收缩为图标">收起</button>
         <div class="bin">
+        <div id="dlr-dock-resize" title="拖动调整面板高度 (有下限, 不会把文字压没)"></div>
         <div class="drag">
         <h3>钉钉直播回放下载</h3>
         <div class="sub">免登录, 公开接口抓取 m3u8</div>
@@ -1796,6 +1824,8 @@
                     <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
                     <label class="chk" title="实验性, 默认关闭. 打开后整个面板立刻内嵌到右侧 互动/简介 侧栏的页签下方(页面一加载就嵌, 不是等解析完才嵌), 页签与互动内容都在下方照常可用、不被遮挡; 收起面板即可把空间还给互动. 页面上找不到侧栏时(如未登录)自动保持悬浮.">
                         <input type="checkbox" id="dlr-dock">面板内嵌侧栏(实验性)</label>
+                    <label class="chk" title="实验性, 默认关闭. 开启后**所有下载任务**改由本机 aria2 执行: 点「下载本页回放」以及队列里的每一个回放, 切片逐条 addUri, 面板内的切片下载/拼接/保存全部跳过. 关闭时行为与之前完全一致. 需要本机已启动 aria2 RPC (默认 127.0.0.1:6801, 强烈建议配 --rpc-secret).">
+                        <input type="checkbox" id="dlr-aria2-on">下载交给 aria2(实验性)</label>
                 </div>
                 <div id="dlr-aria2-box">
                     <div class="arow">
@@ -1932,6 +1962,54 @@
         for (let i = 0; i < items.length; i += ARIA2_BATCH) batches.push(items.slice(i, i + ARIA2_BATCH));
         return { items: items, batches: batches };
     }
+
+    // aria2 配置的**唯一读取入口**, 必须在模块级: init() 里的 arConfig 是局部 const,
+    // run() 看不到它 —— 早先一版在 run() 里判 `typeof arConfig === 'function'` 永远为假,
+    // 于是开启总开关后每次下载都报「aria2 配置尚未初始化」(浏览器验收抓出的真 bug)。
+    function aria2Config() {
+        const g = (id) => { try { return document.getElementById(id); } catch (e) { return null; } };
+        const host = g('dlr-aria2-host'), port = g('dlr-aria2-port');
+        const secret = g('dlr-aria2-secret'), dir = g('dlr-aria2-dir');
+        return {
+            host: (host && host.value.trim()) || ARIA2_HOST_DEF,
+            port: (port && parseInt(port.value, 10)) || ARIA2_PORT_DEF,
+            secret: (secret && secret.value) || '',
+            dir: (dir && dir.value.trim()) || '',
+        };
+    }
+    // 总开关状态也放模块级, run() 与面板 UI 共用同一个标志。
+    window.__aria2Enabled = false;
+    try { window.__aria2Enabled = !!GM_getValue('dlr_aria2_on', false); } catch (e) { }
+
+
+    // 把一批切片推给 aria2 并汇报结果。返回 {ok, total, failed, firstErr}。
+    // 「发送到 aria2」按钮与「下载交给 aria2」总开关共用这一条路径, 不复制逻辑。
+    // opts: {segments, encrypted, fmp4, dir, referer, ua, secret, label}
+    // 返回 {skipped:true, reason} 表示这条路 aria2 根本做不了 (加密/fMP4/空列表)。
+    async function aria2PushAll(opts) {
+        const segs = opts.segments || [];
+        if (!segs.length) return { skipped: true, reason: '切片列表为空' };
+        if (opts.encrypted) return { skipped: true, reason: 'AES-128 加密切片 (密钥只在浏览器里)' };
+        if (opts.fmp4) return { skipped: true, reason: 'fMP4 回放 (含独立初始化段)' };
+        const plan = aria2Plan(segs, opts.dir, opts.referer, opts.ua);
+        if (!plan.items.length) return { skipped: true, reason: '没有可推送的切片 URL' };
+        let gids = 0, failed = 0, firstErr = '';
+        for (let b = 0; b < plan.batches.length; b++) {
+            const payload = aria2BuildBatch(String(b + 1), plan.batches[b], opts.secret);
+            const body = await aria2Rpc(opts.cfg, payload, 30000);
+            const res = (body.result || []);
+            for (let k = 0; k < res.length; k++) {
+                if (res[k] && res[k].error) {
+                    failed++;
+                    if (!firstErr) firstErr = aria2Explain(res[k].error.message || ('code ' + res[k].error.code));
+                } else gids++;
+            }
+        }
+        return { ok: gids > 0, total: plan.items.length, gids: gids, failed: failed,
+                 firstErr: firstErr, batches: plan.batches.length,
+                 firstName: plan.items[0].out, lastName: plan.items[plan.items.length - 1].out };
+    }
+
 
     // ---------- 面板内嵌侧栏的挂载宿主 (v3.2.0, 实验性) ----------
     // 结构 (登录态实测 2026-10-05): #live-room 是稳定 id, 两个子列 = 播放器列 + 侧栏列
@@ -2636,6 +2714,36 @@
                 : '';
             const plannedName = baseName + suffix + clipTag + (wantMp4 ? '.mp4' : '.ts');
 
+            // v3.4.0: 「下载交给 aria2」总开关开启时, 这一整个下载改由本机 aria2 执行 ——
+            // 浏览器内不再拉切片/拼接/保存, 面板只负责解析并推送任务清单。
+            if (window.__aria2Enabled) {
+                const arCfg = aria2Config();   // 模块级读取器
+                progressSet(P.prep, '交给 aria2');
+                const r = await aria2PushAll({
+                    segments: parsed.segments, encrypted: parsed.encrypted, fmp4: parsed.fmp4,
+                    dir: arCfg.dir, referer: REFERER, ua: navigator.userAgent || '',
+                    secret: arCfg.secret, cfg: arCfg,
+                });
+                if (r.skipped) {
+                    setStatus('⚠ 无法交给 aria2: ' + r.reason, true);
+                    appendLog('⚠ 已跳过浏览器内下载: ' + r.reason);
+                    progressDone(false);
+                    diagRun(false, 'aria2 skipped: ' + r.reason, parsed.segments);
+                    return;
+                }
+                const dirNote = arCfg.dir ? (' → ' + arCfg.dir) : ' (aria2 默认目录)';
+                setStatus('✅ 已推给 aria2: ' + r.gids + '/' + r.total + ' 个切片' + dirNote +
+                    (r.failed ? (' · ' + r.failed + ' 条失败: ' + r.firstErr) : ''), r.failed > 0);
+                appendLog('⬇ aria2 已接管本次下载: ' + r.gids + '/' + r.total + ' 个切片 (' + r.batches + ' 批)' + dirNote);
+                if (r.gids) {
+                    appendLog('   文件名形如 ' + r.firstName + ' ... ' + r.lastName +
+                        '; 合成单个文件: ffmpeg -f concat -safe 0 -i list.txt -c copy out.mp4');
+                }
+                progressDone(r.failed === 0);
+                diagRun(r.failed === 0, 'aria2 ' + r.gids + '/' + r.total, parsed.segments);
+                lastRunResult = { ok: r.failed === 0, name: '' };
+                return;
+            }
             appendLog('   切片数:' + segs.length +
                 (parsed.encrypted ? '   AES-128 加密' : '') +
                 (parsed.fmp4 ? '   fMP4' : '   TS'));
@@ -3571,6 +3679,8 @@
         // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
         const applyMini = () => {
         panel.classList.toggle('mini', miniState);
+        // 收起/展开时重算内嵌高度下限 (收起态必须清零, 见 CSS 注释)。
+        try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
         // 收起态横条的高度用内联写入（内联必胜样式表，避开特异性竞争）。
         const ex = panel.querySelector('.expand');
         if (ex) {
@@ -3768,12 +3878,25 @@
             arState.textContent = txt || '';
             arState.className = cls || '';
         };
-        const arConfig = () => ({
-            host: (arHost && arHost.value.trim()) || ARIA2_HOST_DEF,
-            port: (arPort && parseInt(arPort.value, 10)) || ARIA2_PORT_DEF,
-            secret: (arSecret && arSecret.value) || '',
-            dir: (arDir && arDir.value.trim()) || '',
-        });
+        // aria2 总开关 (v3.4.0, 实验性, 默认关闭): 开启后**所有**下载任务交给 aria2,
+        // 包括「下载本页回放」与队列里的每个回放; 关闭时行为与之前完全一致。
+        window.__aria2Enabled = false;
+        try { window.__aria2Enabled = !!GM_getValue('dlr_aria2_on', false); } catch (e) { }
+        const arOnChk = $('dlr-aria2-on');
+        if (arOnChk) {
+            arOnChk.checked = window.__aria2Enabled;
+            arOnChk.addEventListener('change', () => {
+                window.__aria2Enabled = arOnChk.checked;
+                try { GM_setValue('dlr_aria2_on', arOnChk.checked); } catch (e) { }
+                arSetState(arOnChk.checked ? '已开启: 之后的所有下载都交给 aria2' : '');
+                appendLog(arOnChk.checked
+                    ? '⬇ 已开启「下载交给 aria2」, 之后所有下载任务改由本机 aria2 执行'
+                    : '⬇ 已关闭「下载交给 aria2」, 下载回到浏览器内');
+            });
+        }
+
+        // 面板读配置统一走模块级读取器, 不留两份实现。
+        const arConfig = () => aria2Config();
         const arSave = () => {
             try {
                 GM_setValue('dlr_aria2_host', arConfig().host);
@@ -3963,7 +4086,8 @@
             panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
             panel.classList.add('docked');
             host.appendChild(panel);
-            dockHost = host;
+            dockHost = host;            // 入槽后重算高度: 上限依赖本页的页签条位置。
+            try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }            dockHost = host;
             try { syncRing(); } catch (e) { }
             return true;
         }
@@ -3972,9 +4096,83 @@
             panel.classList.remove('docked');
             dockHost = null;
             document.body.appendChild(panel);
+            // 回悬浮: 清掉内嵌高度变量, 悬浮态用 CSS 默认高度。
+            panel.style.removeProperty('--dlr-dock-h');
+            panel.style.removeProperty('--dlr-dock-min');
             try { restorePos(); } catch (e) { }   // 回到悬浮: 拖过的坐标 / 没拖过就是右下角
             try { syncRing(); } catch (e) { }
         }
+        // ---------- 内嵌态高度可拉伸 (v3.4.0) ----------
+        // 纯几何: 下限按实测「文字不被裁」算, 上限按页签条以下的实际空间算。
+        const DOCK_MIN_H = 330;
+        // 页签条以下到列底 = 可用高度; 找不到页签条就退回 430。
+        function dockSpace() {
+            const host = dockHost;
+            if (!host || !host.getBoundingClientRect) return 430;
+            const colR = host.getBoundingClientRect();
+            for (let i = 0; i < host.children.length; i++) {
+                const c = host.children[i];
+                if (c === panel) continue;
+                let r = null, pos = '';
+                try { r = c.getBoundingClientRect(); pos = getComputedStyle(c).position; } catch (e) { }
+                if (!r || r.height <= 0 || r.height > 64) continue;
+                if (pos === 'absolute' || pos === 'fixed') continue;
+                if (/互动|简介/.test(c.textContent || '')) {
+                    return Math.max(DOCK_MIN_H, Math.floor(colR.bottom - r.bottom) - 8);
+                }
+            }
+            return 430;
+        }
+        // 唯一的写入口: 拖动、窗口缩放、dock/undock、收起/展开都走它。
+        function applyDockHeight(px) {
+            if (!docked()) return;
+            const h = Math.max(DOCK_MIN_H, Math.min(dockSpace(), Math.round(px)));
+            panel.style.setProperty('--dlr-dock-h', h + 'px');
+            // 收起态清零下限, 否则 .bin 的 min-height 会顶开 .body 的 0fr。
+            try { syncRing(); } catch (e) { }
+            return h;
+        }
+        // 供 applyMini / dockPanel / undockPanel 复用。
+        window.__dockSyncHeight = () => {
+            if (!docked()) return;
+            let h = parseInt(panel.style.getPropertyValue('--dlr-dock-h'), 10);
+            if (!(isFinite(h) && h > 0)) { try { h = parseInt(GM_getValue('dlr_dock_h'), 10); } catch (e) { h = NaN; } }
+            applyDockHeight(isFinite(h) && h > 0 ? h : 430);
+        };
+        try {
+            const savedH = parseInt(GM_getValue('dlr_dock_h'), 10);
+            if (isFinite(savedH) && savedH >= DOCK_MIN_H) applyDockHeight(savedH);
+        } catch (e) { }
+        // 拖动底边改高度。pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
+        // 指针拖出把手范围也不丢事件。
+        const rz = $('dlr-dock-resize');
+        if (rz) {
+            let rStart = 0, hStart = 0, rActive = false;
+            rz.addEventListener('pointerdown', (e) => {
+                if (!docked() || panel.classList.contains('mini')) return;
+                rStart = e.clientY;
+                hStart = panel.getBoundingClientRect().height;
+                rActive = true;
+                try { rz.setPointerCapture(e.pointerId); } catch (err) { }
+                e.preventDefault(); e.stopPropagation();
+            });
+            rz.addEventListener('pointermove', (e) => {
+                if (!rActive) return;
+                e.preventDefault();
+                applyDockHeight(hStart + (e.clientY - rStart));   // 往下拖 = 变高
+            });
+            const rzEnd = (e) => {
+                if (!rActive) return;
+                rActive = false;
+                try { rz.releasePointerCapture(e.pointerId); } catch (err) { }
+                try { GM_setValue('dlr_dock_h', applyDockHeight(panel.getBoundingClientRect().height)); } catch (err) { }
+                try { syncRing(); } catch (err) { }
+            };
+            rz.addEventListener('pointerup', rzEnd);
+            rz.addEventListener('pointercancel', rzEnd);
+            window.addEventListener('resize', () => { if (docked()) applyDockHeight(panel.getBoundingClientRect().height); });
+        }
+
         const dockChk = $('dlr-dock');
         if (dockChk) {
             let want = false;
