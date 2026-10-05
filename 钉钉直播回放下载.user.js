@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.2.1
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      3.3.1
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -14,6 +14,7 @@
 // @grant        GM_setValue
 // @grant        GM_notification
 // @connect      *
+// @connect      127.0.0.1
 // @connect      lv.dingtalk.com
 // @connect      dtliving-sz.dingtalk.com
 // @connect      dtlive-sz.dingtalk.com
@@ -31,6 +32,16 @@
     const INFO_URL = 'https://lv.dingtalk.com/getOpenLiveInfoV2';
     const REFERER = 'https://n.dingtalk.com/';
     const MUX_URL = 'https://cdn.jsdelivr.net/npm/mux.js@6.0.1/dist/mux.min.js';
+    // 本机实测 (aria2 1.37.0 便携版, 真实 RPC 调用) 确认的事实:
+    //   端点 /jsonrpc, 必须 POST (GET 报 Invalid Request);
+    //   密钥作为 params[0] = "token:<secret>", aria2 先摘前缀再校验;
+    //   所有数字都返回 JSON 字符串 (无 float) → 后面 parseInt 不可省;
+    //   失败统一 {error:{code,message}}, 坏 token 报 Unauthorized。
+    // 安全基线: 只连 127.0.0.1 + 密钥。**不要**让用户单独开 --rpc-allow-origin-all:
+    // 源码上它不校验 Origin/Host, 且 JSONP 与 JSON 同一码路, 任何网页都能用
+    // dir/out 往任意路径写文件。
+    const ARIA2_HOST_DEF = '127.0.0.1';
+    const ARIA2_PORT_DEF = 6801;
     const UPDATE_URL = 'https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js';
     const UPDATE_URL_FALLBACK = 'https://gitee.com/Vectg/dingtalk-live-replay-downloader/raw/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js';
     const VERSION = (() => {
@@ -1461,9 +1472,66 @@
             width:100%!important;padding:0 8px 8px!important;margin:0;z-index:5;
             max-height:none;transition:none}
         #dlr-panel.docked .drag{cursor:default}
-        #dlr-panel.docked .body{max-height:min(300px,42vh);width:100%}
+        /* v3.3.1: 内容紧凑后给滚动区更多高度 —— 侧栏列高 632px, 页签条 50px,
+           面板横条区约 56px, 所以 body 上限取 min(430px,62vh) 仍留余量 */
+        #dlr-panel.docked .body{max-height:min(430px,62vh);width:100%}
         #dlr-panel.docked.mini{width:100%!important;padding:0 8px 8px!important}
+        /* ---------- 内嵌态紧凑排版 (v3.3.1) ----------
+           实测 (登录态, 更多设置全部展开): 内容 937px vs 侧栏可见 237px, 只能看到 1/4.
+           逐块高度: 队列区 89 + 设置区 184 + 更多设置 437 + 按钮行 59 + 状态 49.
+           紧凑化只作用于内嵌态 (.docked), 悬浮态外观与手感完全不变:
+             行间距 3→1px, 区块间距 5→3px, 控件高与字号各收一档,
+             状态栏/进度条/页脚缩小, 队列框 2 行→1 行.
+           纯 CSS, 不动结构与逻辑. */
+        #dlr-panel.docked .row{margin:1px 0;gap:4px}
+        #dlr-panel.docked .sec{padding-top:3px;margin-top:3px}
+        #dlr-panel.docked .tip{margin-top:1px;font-size:10px;line-height:1.3}
+        #dlr-panel.docked h3{font-size:12px;margin-bottom:0}
+        #dlr-panel.docked .sub{font-size:10px;margin-bottom:4px}
+        #dlr-panel.docked .drag{padding-right:44px}
+        #dlr-panel.docked input[type=text],#dlr-panel.docked input[type=number],
+        #dlr-panel.docked select{padding:2px 5px;font-size:11px}
+        #dlr-panel.docked textarea{padding:2px 5px;font-size:11px}
+        #dlr-panel.docked #dlr-url{font-size:11px}
+        #dlr-panel.docked button{padding:2px 6px;font-size:11px}
+        #dlr-panel.docked button.primary{padding:5px 10px;font-size:12px;border-radius:6px}
+        #dlr-panel.docked #dlr-status{margin-top:4px;padding:4px 6px;font-size:11px;
+            min-height:22px;line-height:1.4}
+        #dlr-panel.docked #dlr-progress{margin-top:5px;min-height:18px}
+        #dlr-panel.docked #dlr-progress .pct{font-size:11px;min-height:16px;padding:1px 6px}
+        #dlr-panel.docked .foot{margin-top:5px;padding-top:4px;font-size:10px}
+        #dlr-panel.docked .grid2{gap:0 6px;margin-top:3px}
+        #dlr-panel.docked .grid2>.chk{font-size:11px}
+        #dlr-panel.docked .mrow{margin-top:2px;gap:6px}
+        #dlr-panel.docked .more-body .mrow,#dlr-panel.docked .more-body .grid2{margin-top:2px}
+        #dlr-panel.docked .more-toggle{font-size:11px;padding:1px 0}
+        #dlr-panel.docked #dlr-queue{height:20px;min-height:20px;line-height:1.3}
+        /* aria2 区块实测占 172px (更多设置 373px 里最大的一块), 说明文字就吃掉 39px.
+           内嵌态压到约 100px: 行更紧凑 + 说明限高两行. */
+        #dlr-panel.docked #dlr-aria2-box{margin:3px 0;padding:3px 5px}
+        #dlr-panel.docked #dlr-aria2-box .arow{margin:1px 0;gap:4px}
+        #dlr-panel.docked #dlr-aria2-box .atip{font-size:9.5px;line-height:1.25;margin-top:1px;
+            max-height:2.6em;overflow:hidden}
+        #dlr-panel.docked #dlr-aria2-box button{margin-top:2px;padding:2px 6px}
+        #dlr-panel.docked #dlr-aria2-state{font-size:10px;min-height:12px;margin-top:1px}
+        #dlr-panel.docked label{min-width:56px;font-size:11px}
         #dlr-panel.docked.mini .body{width:100%}
+        /* aria2 区块 (v3.3.0, 实验性): 主机/端口/密钥/目录 + 状态行 + 测试按钮 */
+        #dlr-aria2-box{margin:6px 0;padding:6px 8px;border:1px solid #23262e;border-radius:6px}
+        #dlr-aria2-box .arow{display:flex;align-items:center;gap:5px;margin:3px 0;flex-wrap:wrap}
+        #dlr-aria2-box .arow>label{flex:0 0 auto;min-width:44px}
+        #dlr-aria2-box input{flex:1;min-width:0;box-sizing:border-box;padding:3px 6px;
+            background:#0f1115;color:#e8eaee;border:1px solid #2c303a;border-radius:6px;
+            outline:none;font-size:12px}
+        #dlr-aria2-box input:focus{border-color:#3d6eff;box-shadow:0 0 0 2px rgba(61,110,255,.25)}
+        #dlr-aria2-box .adir{flex:2 1 120px}
+        #dlr-aria2-box #dlr-aria2-host{flex:1 1 84px}
+        #dlr-aria2-box #dlr-aria2-port{flex:0 1 66px}
+        #dlr-aria2-box .atip{font-size:10.5px;line-height:1.35;color:#6d727c;margin-top:3px}
+        #dlr-aria2-box button{width:100%;margin-top:3px}
+        #dlr-aria2-state{font-size:11px;color:#7d828d;min-height:15px;line-height:1.35;margin-top:3px}
+        #dlr-aria2-state.ok{color:#7fc98a}
+        #dlr-aria2-state.bad{color:#ff7a7a}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
         /* 更多设置：可折叠小面板 */
         #dlr-panel .more-toggle{display:flex;align-items:center;justify-content:space-between;
@@ -1636,7 +1704,7 @@
         </div>
         <div class="sec"><div class="row"><input type="text" id="dlr-url" placeholder="粘贴回放链接, 或自动读取本页"></div>
             <div class="row" style="margin-top:6px">
-                <textarea id="dlr-queue" rows="2" style="flex:1;resize:vertical;font:inherit;font-size:12px;
+                <textarea id="dlr-queue" rows="1" style="flex:1;resize:vertical;font:inherit;font-size:12px;
                     background:#1b1e26;color:#e6e8eb;border:1px solid #2f3440;border-radius:6px;padding:6px 8px"
                     placeholder="队列(可选): 每行一个回放, 整段链接或 roomId liveUuid; 按顺序依次下载"></textarea>
             </div>
@@ -1688,6 +1756,7 @@
         <div class="row">
             <button id="dlr-diag" title="把版本, 解析结果, 失败片号, 未捕获异常等导出为 .txt, 便于排查问题">📋 导出诊断日志</button>
             <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8, 可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
+            <button id="dlr-aria2-send" title="实验性. 把当前分辨率的每个切片 URL 逐条交给本机 aria2 下载 (aria2.addUri), 文件落到 aria2 的保存目录; 合成一个文件请用 ffmpeg -f concat. 需要本机已开启 aria2 RPC (默认 127.0.0.1:6801, 强烈建议配 --rpc-secret)">⬇ 发送到 aria2</button>
         </div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
@@ -1728,6 +1797,21 @@
                     <label class="chk" title="实验性, 默认关闭. 打开后整个面板立刻内嵌到右侧 互动/简介 侧栏的页签下方(页面一加载就嵌, 不是等解析完才嵌), 页签与互动内容都在下方照常可用、不被遮挡; 收起面板即可把空间还给互动. 页面上找不到侧栏时(如未登录)自动保持悬浮.">
                         <input type="checkbox" id="dlr-dock">面板内嵌侧栏(实验性)</label>
                 </div>
+                <div id="dlr-aria2-box">
+                    <div class="arow">
+                        <input type="text" id="dlr-aria2-host" title="aria2 RPC 主机, 建议保持 127.0.0.1">
+                        <input type="number" id="dlr-aria2-port" min="1" max="65535" title="aria2 RPC 端口 (默认 6801)">
+                    </div>
+                    <div class="arow">
+                        <input type="password" id="dlr-aria2-secret" placeholder="aria2 密钥 (对应 --rpc-secret)" title="aria2 --rpc-secret 的值; 留空表示未启用密钥">
+                        <input type="text" id="dlr-aria2-dir" class="adir" placeholder="保存目录 (留空 = aria2 默认)" title="aria2 的保存目录; 留空则用 aria2 自己配置的 dir">
+                    </div>
+                    <div class="arow">
+                        <button id="dlr-aria2-test" title="调用 aria2.getVersion 探测本机 aria2 是否可达、密钥是否正确">🔌 测试连接</button>
+                    </div>
+                    <div id="dlr-aria2-state"></div>
+                    <div class="atip">实验性. aria2 不支持 m3u8, 逐条把切片 URL 交给它下载; 合成单文件用 ffmpeg -f concat.</div>
+                </div>
                 <div class="tip">预取播放地址与切片索引, 打开页面后无需等待即可直接下载.</div>
             </div></div>
         </div>
@@ -1750,6 +1834,103 @@
         const liveUuid = u.searchParams.get('liveUuid') || '';
         if (!roomId || !liveUuid) throw new Error('链接缺少 roomId/liveUuid');
         return { roomId, liveUuid };
+    }
+
+    // ---------- aria2 推送 (v3.3.0, 实验性) ----------
+    // 前三个是纯函数 (无 IO), 可直接单测; 真正发 RPC 的 aria2Call 只做一次 POST。
+
+    // 切片落盘名: 用序号补零到 5 位, 保证 aria2 下载完能按顺序 concat。
+    // sequence 缺失时退回下标 +1 —— 两者都是整数, 不能出现 seg2.ts 排在 seg10.ts 前面。
+    function aria2SegName(seg, index) {
+        const raw = (seg && seg.sequence !== undefined && seg.sequence !== null && isFinite(seg.sequence))
+            ? seg.sequence : (index + 1);
+        return 'seg' + String(Math.max(0, Math.round(raw))).padStart(5, '0') + '.ts';
+    }
+    // 单个 addUri 的 options。header 必须是字符串数组 (aria2 原样附加到 HTTP 请求头),
+    // 实测 Referer / User-Agent / Cookie 都能透传; 钉钉切片不需要 Cookie。
+    function aria2Options(out, dir, headers, extra) {
+        const o = {};
+        if (out) o.out = out;
+        if (dir) o.dir = dir;
+        if (headers && headers.length) o.header = headers.slice();
+        if (extra) { for (const k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k]; } }
+        return o;
+    }
+    // 组装一批 addUri 的请求体。分片太多时一次请求塞不下 (实测几百条尚可, 上千条要分批),
+    // 所以按 caller 传入的批大小切分 —— 这里只负责把一批拼成 JSON-RPC 结构。
+    function aria2BuildBatch(gids, items, secret) {
+        const calls = items.map((it) => {
+            const params = [];
+            if (secret) params.push('token:' + secret);
+            params.push([it.url]);
+            params.push(it.options);
+            return { methodName: 'aria2.addUri', params };
+        });
+        return { jsonrpc: '2.0', id: 'dlr-' + (gids || ''), method: 'system.multicall', params: [calls] };
+    }
+    // RPC 错误 → 人话。aria2 的错误码实测只有 1(Unauthorized) 等少数几个,
+    // 更多情况要靠 message 文本判断, 所以两条路都给。
+    function aria2Explain(msg) {
+        const m = String(msg || '');
+        if (/Unauthorized/i.test(m)) return '密钥不对 (aria2 报 Unauthorized) — 请核对 --rpc-secret';
+        if (/Invalid Request/i.test(m)) return 'aria2 版本不兼容该请求 (Invalid Request)';
+        if (/No such method/i.test(m)) return '这个 aria2 没有该方法 (No such method), 版本可能太老';
+        if (/ECONNREFUSED|连接|reach|Failed to fetch/i.test(m)) return '连不上 aria2 — 确认它已启动且 RPC 端口/主机填对';
+        return m;
+    }
+    // ---------- aria2 RPC 传输层 (v3.3.0, 实验性) ----------
+    // 只发 POST 到 /jsonrpc (实测 GET 一律 Invalid Request)。gmx 会把非 2xx 当失败抛错,
+    // 这里不用它 —— RPC 的错误在 200 的 JSON body 里 (error.code/message), 走 gmx 会丢上下文。
+    function aria2Rpc(cfg, payload, timeout) {
+        const url = 'http://' + cfg.host + ':' + cfg.port + '/jsonrpc';
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: url,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify(payload),
+                timeout: timeout || 15000,
+                onload: (r) => {
+                    let body = null;
+                    try { body = JSON.parse(r.response); } catch (e) { }
+                    if (!body) {
+                        reject(new Error('aria2 返回的不是 JSON (HTTP ' + r.status + '): ' +
+                            String(r.response || '').slice(0, 120)));
+                        return;
+                    }
+                    // system.multicall 的错误在 result[] 里逐条; 单条调用在顶层 error
+                    if (body.error) {
+                        reject(new Error(aria2Explain(body.error.message || ('code ' + body.error.code))));
+                        return;
+                    }
+                    resolve(body);
+                },
+                onerror: (e) => reject(new Error(aria2Explain('网络错误 ' + (e && e.error ? e.error : '')))),
+                ontimeout: () => reject(new Error('aria2 请求超时')),
+                onabort: () => reject(new Error('aria2 请求被中断')),
+            });
+        });
+    }
+    // 一次 POST 最多塞多少条切片: 单条 addUri 请求体约 300 字节, 留足余量。
+    const ARIA2_BATCH = 40;
+    // 把解析出的切片列表切成一批批 addUri 参数。切片顺序即 m3u8 顺序, 不能重排。
+    function aria2Plan(segments, dir, referer, ua) {
+        const headers = [];
+        if (referer) headers.push('Referer: ' + referer);
+        if (ua) headers.push('User-Agent: ' + ua);
+        const items = [];
+        for (let i = 0; i < segments.length; i++) {
+            const s = segments[i];
+            if (!s || !s.url) continue;
+            items.push({
+                url: s.url,
+                out: aria2SegName(s, i),
+                options: aria2Options(aria2SegName(s, i), dir, headers),
+            });
+        }
+        const batches = [];
+        for (let i = 0; i < items.length; i += ARIA2_BATCH) batches.push(items.slice(i, i + ARIA2_BATCH));
+        return { items: items, batches: batches };
     }
 
     // ---------- 面板内嵌侧栏的挂载宿主 (v3.2.0, 实验性) ----------
@@ -3576,6 +3757,134 @@
                 m3u8Btn.textContent = oldText;
             }
         });
+
+        // ---------- aria2 推送 (v3.3.0, 实验性) ----------
+        // 设置项持久化; 密钥只写 GM 存储, 不外发、不进诊断日志。
+        const arHost = $('dlr-aria2-host'), arPort = $('dlr-aria2-port'),
+            arSecret = $('dlr-aria2-secret'), arDir = $('dlr-aria2-dir'),
+            arState = $('dlr-aria2-state'), arTest = $('dlr-aria2-test'), arSend = $('dlr-aria2-send');
+        const arSetState = (txt, cls) => {
+            if (!arState) return;
+            arState.textContent = txt || '';
+            arState.className = cls || '';
+        };
+        const arConfig = () => ({
+            host: (arHost && arHost.value.trim()) || ARIA2_HOST_DEF,
+            port: (arPort && parseInt(arPort.value, 10)) || ARIA2_PORT_DEF,
+            secret: (arSecret && arSecret.value) || '',
+            dir: (arDir && arDir.value.trim()) || '',
+        });
+        const arSave = () => {
+            try {
+                GM_setValue('dlr_aria2_host', arConfig().host);
+                GM_setValue('dlr_aria2_port', arConfig().port);
+                GM_setValue('dlr_aria2_secret', arConfig().secret);
+                GM_setValue('dlr_aria2_dir', arConfig().dir);
+            } catch (e) { }
+        };
+        // 回填已存设置 (密钥回填是本地存储→本地输入框, 不经过网络)。
+        if (arHost) {
+            try { arHost.value = GM_getValue('dlr_aria2_host', ARIA2_HOST_DEF) || ARIA2_HOST_DEF; } catch (e) { }
+            try { arPort.value = GM_getValue('dlr_aria2_port', ARIA2_PORT_DEF) || ARIA2_PORT_DEF; } catch (e) { }
+            try { arSecret.value = GM_getValue('dlr_aria2_secret', '') || ''; } catch (e) { }
+            try { arDir.value = GM_getValue('dlr_aria2_dir', '') || ''; } catch (e) { }
+            [arHost, arPort, arSecret, arDir].forEach((el) => {
+                el && el.addEventListener('change', () => { arSave(); arSetState(''); });
+            });
+        }
+        // 测试连接: getVersion 是最轻的调用, 拿它区分「连不上 / 密钥错 / 版本不兼容」。
+        arTest && arTest.addEventListener('click', async () => {
+            const cfg = arConfig();
+            arSave();
+            arTest.disabled = true;
+            arSetState('正在连接 ' + cfg.host + ':' + cfg.port + ' ...');
+            try {
+                const params = [];
+                if (cfg.secret) params.push('token:' + cfg.secret);
+                params.push([]);
+                const body = await aria2Rpc(cfg, { jsonrpc: '2.0', id: 'dlr-test', method: 'aria2.getVersion', params: params }, 8000);
+                const ver = (body.result && body.result.version) || '未知';
+                const enabled = (body.result && body.result.enabledFeatures) || [];
+                // 数字型字段一律是字符串 (aria2 实测), 所以 split 出现就是支持
+                arSetState('✅ 已连接 aria2 ' + ver +
+                    (enabled.indexOf('RPC') >= 0 ? '' : ' (未启用 RPC?)'), 'ok');
+                appendLog('🔌 aria2 连接成功, 版本 ' + ver);
+            } catch (e) {
+                arSetState('❌ ' + e.message, 'bad');
+                appendLog('🔌 aria2 连接失败: ' + e.message);
+            } finally {
+                arTest.disabled = false;
+            }
+        });
+        // 发送到 aria2: 必须先有解析结果, 否则无从推送。
+        arSend && arSend.addEventListener('click', async () => {
+            if (!prepCache || !prepCache.parsed || !(prepCache.parsed.segments || []).length) {
+                setStatus('⚠ 尚未解析到切片列表, 请先点"下载本页回放"或等预取完成', true);
+                return;
+            }
+            const segs = prepCache.parsed.segments;
+            // 这两条路径 aria2 拿不到: 加密切片要 AES-128 参数, fMP4 的 init 段是独立地址。
+            // 与其推一批下不下来的任务, 不如直接说清楚。
+            if (prepCache.parsed.encrypted) {
+                setStatus('⚠ AES-128 加密切片无法交给 aria2 (密钥只在浏览器里解密)', true);
+                appendLog('⚠ 该回放为 AES-128 加密, 已拒绝推送到 aria2');
+                return;
+            }
+            if (prepCache.parsed.fmp4) {
+                setStatus('⚠ fMP4 回放(含初始化段)暂不支持推送到 aria2', true);
+                appendLog('⚠ 该回放为 fMP4 (#EXT-X-MAP), 已拒绝推送到 aria2');
+                return;
+            }
+            const cfg = arConfig();
+            arSave();
+            const ua = navigator.userAgent || '';
+            const plan = aria2Plan(segs, cfg.dir, REFERER, ua);
+            if (!plan.items.length) {
+                setStatus('⚠ 切片列表为空, 无法推送', true);
+                return;
+            }
+            const oldText = arSend.textContent;
+            arSend.disabled = true;
+            arSend.textContent = '⏳ 推送中...';
+            arSetState('正在推送 ' + plan.items.length + ' 个切片 ...');
+            try {
+                let gids = 0, failed = 0, firstErr = '';
+                for (let b = 0; b < plan.batches.length; b++) {
+                    const payload = aria2BuildBatch(String(b + 1), plan.batches[b], cfg.secret);
+                    const body = await aria2Rpc(cfg, payload, 30000);
+                    const res = (body.result || []);
+                    for (let k = 0; k < res.length; k++) {
+                        if (res[k] && res[k].error) {
+                            failed++;
+                            if (!firstErr) firstErr = aria2Explain(res[k].error.message || ('code ' + res[k].error.code));
+                        } else gids++;
+                    }
+                }
+                const title = (prepCache.model && prepCache.model.title) || 'replay';
+                const outName = sanitize(title) || 'replay';
+                if (failed && !gids) {
+                    setStatus('❌ 推送失败: ' + firstErr, true);
+                    appendLog('❌ aria2 推送失败 (' + failed + ' 条): ' + firstErr);
+                } else {
+                    const dirNote = cfg.dir ? (' → ' + cfg.dir) : ' (aria2 默认目录)';
+                    setStatus('✅ 已推送 ' + gids + ' 个切片给 aria2' + dirNote +
+                        (failed ? (' · ' + failed + ' 条失败') : ''), failed > 0);
+                    appendLog('⬇ 已推送到 aria2: ' + gids + '/' + plan.items.length + ' 个切片' + dirNote +
+                        ' (' + (plan.batches.length) + ' 批)' +
+                        (failed ? (' · 失败 ' + failed + ': ' + firstErr) : ''));
+                    appendLog('   文件名形如 ' + aria2SegName(segs[0], 0) + ' ... ' +
+                        aria2SegName(segs[segs.length - 1], segs.length - 1) +
+                        '; 合成单个文件: ffmpeg -f concat -safe 0 -i list.txt -c copy ' + outName + '.mp4');
+                }
+            } catch (e) {
+                setStatus('❌ 推送失败: ' + e.message, true);
+                appendLog('❌ aria2 推送失败: ' + e.message);
+            } finally {
+                arSend.disabled = false;
+                arSend.textContent = oldText;
+            }
+        });
+
 
         // ---------- 队列 UI ----------
         // 三个 q* 变量原先漏了 const（逗号续行时只有第一项带声明），

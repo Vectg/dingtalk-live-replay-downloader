@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.2.0）
+## 功能（v3.3.1）
 
 **核心**
 
@@ -57,10 +57,19 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **截取时长（v2.3.0 起自动识别单位）**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。**时间框不再预设格式**——解析出回放总时长后自动告诉你上限：总时长不足 1 小时给 `mm:ss`，达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`），框内灰字提示随总时长实时变化。**失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复。两段写法（如 `1:30`）不做猜测性改写——它在 `mm:ss` 与 `hh:mm` 之间天然歧义，一律按 `mm:ss` 解析并在超限时给出可用写法。结束超出总时长自动截到末尾并提示。
 - **文件名加时间戳**。
 
+**发送到下载器（实验性）**
+
+- **发送到 aria2（v3.3.0, 实验性）**：面板底部「⬇ 发送到 aria2」把当前分辨率的**每个切片 URL 逐条**交给本机 aria2（`aria2.addUri`，用 `system.multicall` 每批 40 条一次 POST）。更多设置里新增 aria2 区块：主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」，设置持久化（密钥只写本地存储）。**aria2 不支持 m3u8**，所以是逐条推送而不是丢一个播放列表地址；产物是 `seg00000.ts …` 这样的切片文件，日志会给出 `ffmpeg -f concat` 合成命令。
+- **诚实拒绝而不是假装能推**：AES-128 加密切片（密钥只在浏览器里解密）与 fMP4（含独立初始化段）会直接拒绝并在状态栏说明原因。
+- **错误分类**：`Unauthorized` 提示核对 `--rpc-secret`；`Invalid Request` / `No such method` 提示 aria2 版本过旧；连不上则提示确认已启动与端口。测试连接用 `aria2.getVersion` 区分这几种情况。
+- **安全基线**：只连 `127.0.0.1` + 密钥。**不要**只开 `--rpc-allow-origin-all`（源码上它不校验 Origin/Host，任何网页都能借它往你磁盘写文件）。
+
+
 **面板外观**
 
 - **面板内嵌侧栏（v3.2.0, 实验性, 默认关）**：更多设置里打开「面板内嵌侧栏」后, 整个面板在**页面加载时**立刻内嵌到右侧「互动/简介」页签下方 (不是等解析完才嵌, 侧栏晚上线会自动重试). 面板与页签、内容区同为流内兄弟: 页签固定在上、永不被遮挡, 内容区按 flex 自行让位且照常滚动 (实测 1469/1180 两种视口: 页签条 50px, 面板 319/320 宽贴列内, 页签点 hitTest=TAB、内容点=CONTENT, 点「简介」照常切换); 点「收起」面板只剩横条, 空间立刻还给互动 (实测内容区 273px → 525px, 展开还原 273px). 内嵌态禁用拖拽与窗口重定位, 几何全交给 CSS, 光环照旧贴合面板; React 切页签把面板甩掉时 1.5s 内自动挂回, 侧栏消失 (窄窗口/退出登录) 则自动回到悬浮、回来再挂上; 开关状态持久化, 页面上没有侧栏时保持悬浮.
 - **内嵌滚动与底栏（v3.2.1 修复）**：面板内嵌侧栏时内容超出可见高度**现在可以直接滚轮下滑**（此前 `.bin` 是 `overflow:hidden`，实测内容 530px / 可见 271px，下载按钮被压到可见区下方 91px、更多设置 211px，等于点不到）；**版本号 / 检查更新那一栏永远钉在面板最底部**，不再需要滚到底才看得见（它已移出滚动区，收起时自动隐藏，不留空条）。两项在内嵌与悬浮两种形态下都生效。
+- **内嵌紧凑排版（v3.3.1）**：面板内嵌侧栏时自动切换紧凑排版（行距、区块间距、控件高度、字号各收一档，队列输入框 2 行→1 行，aria2 区块与说明文字收紧），**实测可见比例 25% → 54%**（全部展开时内容 698px / 可见 376px）。悬浮（未内嵌）时保持原样。
 - **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
 - **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。 **v3.0.3 修复**：原先横向钳制只在拖动那一刻算一次，窗口缩小后没人重算——把面板拖到最右再缩窗口，面板会有一大半（实测 392px 宽的面板有 240px）跑到屏幕外，鼠标再也点不到、只能刷新页面找回。现窗口缩放时按上次坐标重新钳制一次，反复缩放也不会累积漂移。
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起。**在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起。
@@ -179,7 +188,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.2.0)
+## Features (v3.3.1)
 
 **Core**
 
@@ -225,10 +234,19 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **Clip range (unit auto-detected since v2.3.0)**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired as before. A two-part value (`1:30`) is never rewritten on a guess — it is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` and out-of-range input reports a usable form. An end past the total duration is clamped to the end with a note.
 - **Filename timestamp**: append `_YYYYMMDD-HHmmss`.
 
+**Hand off to a downloader**
+
+- **Send to aria2 (v3.3.0, experimental)**: the 「⬇ 发送到 aria2」 button at the panel bottom hands **every segment URL of the current resolution** to a local aria2, one by one (`aria2.addUri`, batched 40 per POST via `system.multicall`). 更多设置 gains an aria2 block: host / port / secret / save directory plus 「🔌 测试连接」, all persisted (the secret only ever goes into local storage). **aria2 does not support m3u8**, so segments are pushed individually rather than handing over a playlist URL; the artefacts are `seg00000.ts …` files and the log prints the matching `ffmpeg -f concat` command.
+- **Refuses honestly instead of pretending**: AES-128 encrypted segments (the key only exists in the browser) and fMP4 (separate init segment) are rejected with the reason stated in the status line.
+- **Error classes**: `Unauthorized` → check `--rpc-secret`; `Invalid Request` / `No such method` → aria2 too old; unreachable → confirm it is running and the port is right. 「测试连接」 uses `aria2.getVersion` to tell these apart.
+- **Security baseline**: 127.0.0.1 + secret only. **Never** rely on `--rpc-allow-origin-all` alone — in the source it does not validate Origin/Host, so any web page could use it to write files onto your disk.
+
+
 **Panel appearance**
 
 - **Panel docked into the side column (v3.2.0, experimental, off by default)**: switch it on in 更多设置 and the whole panel embeds under the 互动/简介 tabs the moment the page loads (never after parsing; if the column mounts late it retries for 15s). The panel joins the flow as the last sibling of the tab bar, so the tabs stay on top and untouched and the content area simply flexes and keeps scrolling (measured at both 1469 and 1180 viewport: tab bar 50px, panel 319/320 wide inside the column, hitTest of a tab point = TAB and of a content point = CONTENT, clicking 简介 still switches the view). Collapsing the panel shrinks it to the bar and hands the space straight back to the content (273px → 525px measured, 273px restored on expand). While docked, dragging and window re-positioning are disabled and every geometric value belongs to CSS; the halo keeps hugging the panel. A 1.5s watchdog re-attaches the panel if a React re-render evicts it, and if the side column disappears (narrow window / logged out) the panel falls back to floating and re-docks when it returns; the switch persists and stays floating when there is no column at all.
 - **Scrolling and pinned footer (fixed in v3.2.1)**: with the panel docked, content taller than the visible height now **scrolls with the wheel** (`.bin` used to be `overflow:hidden`; measured 530px of content in 271px of space, which pushed the download button 91px and 更多设置 211px below the fold — unreachable), and the **version / 检查更新 footer is pinned to the very bottom of the panel**, always visible without scrolling (it moved out of the scroller and hides itself when collapsed). Both hold in the docked and floating forms.
+- **Compact layout while docked (v3.3.1)**: a docked panel automatically switches to a denser layout (row and section spacing, control heights and font sizes each one step tighter, the queue box goes from 2 rows to 1, the aria2 block and its hint are trimmed) — **measured visible ratio 25% → 54%** (698px of content in 376px of space with everything expanded). Floating panels keep the roomy layout.
 - **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur and a light border, letting the player show through; the state persists across reloads. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content (v2.9.5 fix).
 - **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it. **v3.0.3 fix**: the horizontal clamp used to run only at drag time, and nothing recomputed it after a resize — drag the panel to the right edge and then shrink the window and most of it leaves the screen (measured: 240px of a 392px panel), the mouse can no longer reach it at all, and the only way back is reloading the page. The panel is now re-clamped against the last known position on every window resize, and repeated resizing does not accumulate drift.
 - **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.

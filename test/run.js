@@ -30,7 +30,7 @@ section('extract（抽取器自检）');
     for (const name of ['sanitize', 'fmtBytes', 'parseTimeArg', 'clipSegments',
         'parseAttributes', 'fetchAndParseM3u8', 'fixMp4Duration', 'parseSpsToDims',
         'findSpsCandidates', 'boxIter', 'mergeBuffers', 'parseUrl',
-        'dockMount']) {
+        'dockMount', 'aria2SegName', 'aria2Options', 'aria2BuildBatch', 'aria2Explain', 'aria2Plan']) {
         let code = '';
         try {
             code = extractFn(name);
@@ -1210,6 +1210,89 @@ section('智能调度');
         const colG = sideCol([barG]);
         eq(dockMount(doc([playerCol, colG])) === colG, true, 'G 播放器列被跳过 → 取侧栏列');
     }
+    section('aria2 推送纯函数（v3.3.0）');
+    {
+        const { aria2SegName, aria2Options, aria2BuildBatch, aria2Explain, aria2Plan } =
+            loadFns(['aria2SegName', 'aria2Options', 'aria2BuildBatch', 'aria2Explain', 'aria2Plan'], {
+                aria2SegName: () => {}, aria2Options: () => {}, aria2BuildBatch: () => {},
+                aria2Explain: () => {}, aria2Plan: () => {}, REFERER: 'https://n.dingtalk.com/',
+                ARIA2_BATCH: 40,
+            });
+
+        // 落盘名: 序号补零到 5 位 —— 片数上千时排序不乱
+        eq(aria2SegName({ sequence: 0 }, 0), 'seg00000.ts', 'sequence=0 → seg00000.ts');
+        eq(aria2SegName({ sequence: 9 }, 8), 'seg00009.ts', 'sequence=9 → 补零');
+        eq(aria2SegName({ sequence: 12345 }, 0), 'seg12345.ts', 'sequence 12345 → 5 位');
+        eq(aria2SegName({ sequence: 123456 }, 0), 'seg123456.ts', '超过 5 位不截断');
+        eq(aria2SegName({}, 0), 'seg00001.ts', 'sequence 缺失 → 用下标+1');
+        eq(aria2SegName(null, 4), 'seg00005.ts', 'seg 为 null → 仍按下标');
+        eq(aria2SegName({ sequence: -3 }, 0), 'seg00000.ts', '负序号夹到 0');
+        eq(aria2SegName({ sequence: '7' }, 0), 'seg00007.ts', '字符串序号被 isFinite 接受');
+
+        // options: header 必须是字符串数组; 空值不写进对象
+        const o1 = aria2Options('seg1.ts', '/tmp/d', ['Referer: https://n.dingtalk.com/']);
+        eq(o1.out, 'seg1.ts', 'out 写入');
+        eq(o1.dir, '/tmp/d', 'dir 写入');
+        eq(o1.header, ['Referer: https://n.dingtalk.com/'], 'header 传数组');
+        eq(Object.keys(aria2Options('', '', [])).length, 0, '全空 → 空 options');
+        const o2 = aria2Options('a.ts', '', ['A: 1'], { split: '4', 'max-connection-per-server': '4' });
+        eq(o2.split, '4', 'extra 选项合并');
+        eq(o2['max-connection-per-server'], '4', 'extra 带连字符的键也合并');
+        eq('dir' in o2, false, '空 dir 不写进 options');
+        eq(Object.prototype.hasOwnProperty.call(o2, 'header'), true, 'header 是自有属性');
+
+        // 请求体: token 必须在 params[0], 之后才是 [uris] 与 options
+        const b1 = aria2BuildBatch('1', [{ url: 'https://cdn.example/seg1.ts',
+            options: { out: 'seg1.ts', header: ['Referer: r'] } }], 'SEC');
+        eq(b1.jsonrpc, '2.0', 'jsonrpc 版本');
+        eq(b1.method, 'system.multicall', '用 multicall 一次推一批');
+        eq(b1.params[0].length, 1, '一批一个调用');
+        const c1 = b1.params[0][0];
+        eq(c1.methodName, 'aria2.addUri', '方法名');
+        eq(c1.params[0], 'token:SEC', 'token 在 params[0]');
+        eq(c1.params[1], ['https://cdn.example/seg1.ts'], 'uris 在 params[1]');
+        eq(c1.params[2].out, 'seg1.ts', 'options 在 params[2]');
+        // 无密钥 → 不占 params[0]
+        const b2 = aria2BuildBatch('1', [{ url: 'https://cdn.example/a.ts', options: {} }], '');
+        eq(b2.params[0][0].params[0], ['https://cdn.example/a.ts'], '无密钥 → params[0] 直接是 uris');
+        eq(b2.params[0][0].params.length, 2, '无密钥 → 参数只有 uris+options');
+        // 两批的 id 不同, 便于日志对照
+        const b3 = aria2BuildBatch('2', [{ url: 'x', options: {} }], '');
+        eq(b1.id !== b3.id, true, '不同批次 id 不同');
+
+        // 错误文案: 三种实测错误各有说法
+        eq(aria2Explain('Unauthorized'), '密钥不对 (aria2 报 Unauthorized) — 请核对 --rpc-secret', 'Unauthorized → 提示密钥');
+        eq(aria2Explain('Invalid Request.'), 'aria2 版本不兼容该请求 (Invalid Request)', 'Invalid Request → 版本不兼容');
+        eq(aria2Explain('No such method'), '这个 aria2 没有该方法 (No such method), 版本可能太老', 'No such method → 版本太老');
+        eq(/连不上 aria2/.test(aria2Explain('ECONNREFUSED')), true, 'ECONNREFUSED → 连不上');
+        eq(aria2Explain('some other failure'), 'some other failure', '未知错误原样透出');
+
+        // 分批: 顺序不能变 (concat 靠它), 批大小按 ARIA2_BATCH
+        const segs = [];
+        for (let i = 0; i < 95; i++) segs.push({ url: 'https://cdn.example/seg' + (i + 1) + '.ts', sequence: i });
+        const plan = aria2Plan(segs, '/tmp/out', 'https://n.dingtalk.com/', 'UA/1.0');
+        eq(plan.items.length, 95, '95 片全部成条目');
+        eq(plan.batches.length, 3, '95 片按每批 40 分成 3 批');
+        eq(plan.batches[0].length, 40, '第 1 批 40 条');
+        eq(plan.batches[2].length, 15, '末批 15 条');
+        eq(plan.items[0].out, 'seg00000.ts', '首片名');
+        eq(plan.items[94].out, 'seg00094.ts', '末片名');
+        eq(plan.items[0].options.dir, '/tmp/out', 'dir 传到每条');
+        eq(plan.items[0].options.header, ['Referer: https://n.dingtalk.com/', 'User-Agent: UA/1.0'], 'header 含 Referer+UA');
+        // 顺序: 拼接后必须与原切片序列一一对应
+        const flat = plan.batches.reduce((a, b2) => a.concat(b2), []);
+        eq(flat.length, 95, '展平后仍是 95 条');
+        eq(flat.every((it, i) => it.url === segs[i].url), true, '分批不打乱顺序');
+        eq(flat[50].out, 'seg00050.ts', '第 51 条名对得上');
+        // 空 dir / 空 referer / 空 UA 都不写
+        const p2 = aria2Plan([{ url: 'https://cdn.example/a.ts' }], '', '', '');
+        eq('dir' in p2.items[0].options, false, '空 dir 不写');
+        eq('header' in p2.items[0].options, false, '无 header 就不写 header');
+        // 跳过没有 url 的条目
+        const p3 = aria2Plan([{ url: 'https://cdn.example/a.ts' }, {}, null, { url: '' }], '', 'r', '');
+        eq(p3.items.length, 1, '无 url 的条目被跳过');
+    }
+
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

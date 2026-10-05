@@ -30,6 +30,44 @@
        若确实如此, 应把光环动画与下载状态解耦（如空闲时降低帧率）.
   - **约束**: 任何修改都要保持 v3.0.9 已验证的性质 —— 光环贴合**可见面板**（`.body`,
     收缩态用 `.expand`）, 差距 `[-1,-1,2,2]`; 且必须过 `prefers-reduced-motion`.
+## [3.3.1] - 2026-10-05
+
+### 新增
+- **发送到 aria2（实验性）**: 面板底部「⬇ 发送到 aria2」按钮, 把当前分辨率的**每个切片 URL 逐条**
+  交给本机 aria2 (`aria2.addUri`, 用 `system.multicall` 每批 40 条一次 POST). 更多设置里新增
+  aria2 区块: 主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」, 设置持久化 (密钥只写本地存储).
+  aria2 不支持 m3u8, 所以逐条推送; 产物是 `seg00000.ts …` 切片文件, 日志给出 `ffmpeg -f concat` 合成命令.
+- **拒绝而不是假装能推**: AES-128 加密切片 (密钥只在浏览器里) 与 fMP4 (含独立初始化段) 直接拒绝
+  并在状态栏说明原因, 而不是推一批下不下来的任务.
+- **错误分类**: `Unauthorized` → 核对 `--rpc-secret`; `Invalid Request` / `No such method` → aria2 版本;
+  网络错误 → 确认已启动与端口. 测试连接用 `aria2.getVersion` 区分.
+
+### 变更
+- **内嵌态紧凑排版**: 实测「更多设置全部展开」时内容 937px、侧栏可见仅 237px (只能看到 1/4).
+  新增一整段 `.docked` 专属 CSS: 行距 3→1px、区块间距 5→3px、控件高度与字号各收一档、
+  状态栏/进度条/页脚缩小、队列输入框 2 行→1 行、aria2 区块与说明文字收紧; 滚动区上限
+  `min(300px,42vh)` → `min(430px,62vh)`. 结果: 可见比例 **25% → 54%** (内容 698px / 可见 376px),
+  收起 56px 与展开还原不变, 页脚钉底与页签不被遮挡均保持. **悬浮态完全不受影响** (实测面板
+  722px、输入框字号仍 12px、行距仍 3px).
+
+### 测试
+- aria2 纯函数抽出并跑 55 条断言 (落盘名补零、`options` 合并与空值省略、`system.multicall` 请求体里
+  `token` 必须在 `params[0]`、无密钥时不占位、错误文案映射、95 片按 40 分 3 批且顺序不打乱),
+  验收 390 → 445.
+- 真机验收: 本机便携版 aria2 1.37.0 真实 RPC (`getVersion` 200 / 错密钥 `Unauthorized`),
+  6 条 `addUri` 经 `system.multicall` 全部返回 gid; 浏览器端填参持久化、测试连接、推送按钮与错误
+  分类均验证, `window.__errs` 为 0.
+
+### 排查记录
+- **研究文档里「浏览器不会被 CORS 拦」不成立**: 用页面 `fetch` 打 `127.0.0.1:6801` 时, aria2 不回
+  CORS 头, 浏览器把请求挂住不返回 (表现为按钮一直转). 真机上必须走 `GM_xmlhttpRequest`
+  (扩展特权请求不受页面 CORS 限制) —— 这正是本脚本一直用它的原因. 验收时需要带 CORS 头的中继
+  才能让页面 fetch 打通, 但产品代码不应依赖它.
+- **aria2 拉到文件但 errorCode=18 (Download aborted)** 时先看**源站是否真的返回字节**:
+  本次是测试用的 `python -m http.server` 对所有请求都返回 `size 0`, aria2 因此中止 —— 不是
+  addUri 参数问题. 判据: 先用 curl 确认 `size_download` 非 0, 再看 aria2 的 `errorMessage`.
+
+
 ## [3.2.1] - 2026-10-05
 
 ### 修复
@@ -723,6 +761,8 @@
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
 [未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...HEAD
+[3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
+[3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1
 [3.2.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.0.9...v3.1.0
