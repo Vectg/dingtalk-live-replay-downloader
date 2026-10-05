@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.1.0）
+## 功能（v3.2.0）
 
 **核心**
 
@@ -55,16 +55,15 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 - **自定义文件名**：面板可直接填写输出文件名，**留空则自动使用回放标题**（placeholder 即回放标题）；误带的 `.mp4`/`.ts` 后缀会自动去掉。勾选「文件名加时间戳」后，placeholder 自动追加 `_时间戳` 且每秒刷新。
 - **截取时长（v2.3.0 起自动识别单位）**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）。**时间框不再预设格式**——解析出回放总时长后自动告诉你上限：总时长不足 1 小时给 `mm:ss`，达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`），框内灰字提示随总时长实时变化。**失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复。两段写法（如 `1:30`）不做猜测性改写——它在 `mm:ss` 与 `hh:mm` 之间天然歧义，一律按 `mm:ss` 解析并在超限时给出可用写法。结束超出总时长自动截到末尾并提示。
-- **内置预览**：MP4 下载完成后可在面板内直接播放，支持**倍速**（0.5×–2×）与**音量**控制。
-- **内嵌播放器预览（v3.1.0, 实验性, 默认关）**：更多设置里开启后, MP4 下载完成的预览不再挤在面板小窗, 而是铺满钉钉自带播放器的位置（实测 1002×564, 窗口缩放由 CSS `inset:0` 自动跟随, 无 JS 追踪）, 同时自动暂停原生播放避免两条音轨叠加, 关闭预览即恢复. **预览右上角可在「播放器 / 互动·简介侧栏」两个位置间实时切换**：播放器位铺满视频区, 侧栏位铺满右侧互动·简介列（实测 320×632, 按 `#live-room` 的结构加「互动/简介」页签文本定位, 不碰随发版变化的哈希 class）, 选择会记住、下次沿用, 首选位置不在时自动换另一个, 都没有才退回面板内预览. 锚点只认页面稳定 id（`#ding_live_player`, 兜底 `#J_player`）, 播放器不存在时（如未登录）自动退回面板内预览, 下载流程完全不受影响.
 - **文件名加时间戳**。
 
 **面板外观**
 
+- **面板内嵌侧栏（v3.2.0, 实验性, 默认关）**：更多设置里打开「面板内嵌侧栏」后, 整个面板在**页面加载时**立刻内嵌到右侧「互动/简介」页签下方 (不是等解析完才嵌, 侧栏晚上线会自动重试). 面板与页签、内容区同为流内兄弟: 页签固定在上、永不被遮挡, 内容区按 flex 自行让位且照常滚动 (实测 1469/1180 两种视口: 页签条 50px, 面板 319/320 宽贴列内, 页签点 hitTest=TAB、内容点=CONTENT, 点「简介」照常切换); 点「收起」面板只剩横条, 空间立刻还给互动 (实测内容区 273px → 525px, 展开还原 273px). 内嵌态禁用拖拽与窗口重定位, 几何全交给 CSS, 光环照旧贴合面板; React 切页签把面板甩掉时 1.5s 内自动挂回, 侧栏消失 (窄窗口/退出登录) 则自动回到悬浮、回来再挂上; 开关状态持久化, 页面上没有侧栏时保持悬浮.
 - **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）。开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留。毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）。
 - **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）。**收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）。**只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）。**横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」。 **v3.0.3 修复**：原先横向钳制只在拖动那一刻算一次，窗口缩小后没人重算——把面板拖到最右再缩窗口，面板会有一大半（实测 392px 宽的面板有 240px）跑到屏幕外，鼠标再也点不到、只能刷新页面找回。现窗口缩放时按上次坐标重新钳制一次，反复缩放也不会累积漂移。
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起。**在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起。
-- **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）。拖动面板时自动折叠「更多设置」与输出预览区，拖完自动恢复原状态——折叠区在拖动过程中只会碍事。不想这个行为可以在更多设置里关掉。
+- **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）。拖动面板时自动折叠「更多设置」，拖完自动恢复原状态——折叠区在拖动过程中只会碍事。不想这个行为可以在更多设置里关掉。
 - **面板视口自适应（v2.6.1）**：面板高度上限跟随窗口可用高度（`100vh - 140px`），超出部分在面板内滚动。**无论窗口多矮，全部展开也不会超出屏幕边界**——实测 700px 高的窗口下面板为 678px，正常笔记本视口完全够用，不必再为「设置展开后顶出屏幕」操心。
 - **更设置更紧凑（v2.6.0）**：数字输入框与下拉框两两并排一行，八个开关排成两列网格，整体高度比之前矮一半，不用再滚动半天找选项。
 - **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**。前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留；手动收起/展开会同步「面板状态」。**面板状态读取做了归一化**：历史版本存过的布尔、数字、字符串杂散值（`true`/`1`/`'true'`）都能正确识别，首启自动统一成规范格式，下拉框始终与面板实际状态一致（v1.9.3 修复「实际收缩却显示默认展开」的错位）。展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡。
@@ -114,7 +113,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接。
 2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部）、并发、重试。
 3. 页面解析完成后会在后台预下载切片，日志会报完成进度。此时点「下载本页回放」只需合并保存，实际耗时取决于预下载完成度；状态栏依次显示：切片 `n/N` → 拼接 → 保存。
-4. 选择 MP4 且下载成功后，面板内会出现**预览播放器**，可调倍速。TS 无法在浏览器内预览（见已知限制）。
+4. 下载完成后状态栏显示 `✅ 完成`, 文件已存入浏览器默认下载文件夹; v3.2.0 起不再在面板内弹出预览播放器与倍速播放.
 5. 不用时可点「收起」把面板缩成右下角横条，点条即可展开；下载进行中光环保持可见。
 6. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页。
 
@@ -155,8 +154,6 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 ## 已知限制
 
 - 截取默认按切片边界对齐（约 30 秒粒度）；开启「帧级精确截取」后对齐到关键帧，但需要完整切片集才能建立时间轴，且仅支持 TS（fMP4 会自动退回切片对齐）。
-- 预览的**倍速只作用于面板内播放**，不改变已保存的文件——改写音频音量或播放速度需重新编码，浏览器内无法可靠完成；需要这类处理请把 `.ts` 交给 ffmpeg。
-- `.ts` 无法在浏览器 `<video>` 内预览（Chromium 不解码 MPEG-TS），需 VLC / mpv / PotPlayer，或改选 MP4。
 - **下载光环的动画在高分辨率屏幕上可能不够顺滑**（4K / 高 DPI 环境反馈）。光环本身的位置与尺寸已正确贴合面板；卡顿只影响动画流畅度，不影响下载。已排除「dash 动画计算量过大」这一常见猜测——实测关闭动画与开启动画的帧耗时一致。待查方向与验证方法见 CHANGELOG 的「未发布」小节。
 - 回放签名约 10 天有效，过期后重新点一次下载即可。
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充。
@@ -181,7 +178,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.1.0)
+## Features (v3.2.0)
 
 **Core**
 
@@ -222,19 +219,18 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **Link parsing fix (v1.9.8)**: pasting a bare query string without a domain (`?roomId=…&liveUuid=…`) no longer fails with "link is missing roomId/liveUuid" — the old fallback prepended another `?`, which glued an extra question mark onto the first parameter name so nothing resolved.
 - **Custom filename**: type it in the panel; **left blank it uses the replay title** (the placeholder shows that title). An accidental `.mp4` / `.ts` suffix is stripped automatically. With "append timestamp" enabled the placeholder gains `_timestamp` and refreshes every second.
 
-**Clipping and preview**
+**Clipping**
 
 - **Clip range (unit auto-detected since v2.3.0)**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired as before. A two-part value (`1:30`) is never rewritten on a guess — it is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` and out-of-range input reports a usable form. An end past the total duration is clamped to the end with a note.
-- **Built-in preview**: after an MP4 finishes downloading, a player appears in the panel with **speed** (0.5×–2×) control. Playback speed affects the preview only, never the saved file — see Known limitations.
-- **Embedded player preview (v3.1.0, experimental, off by default)**: with the switch on in 更多设置, the MP4 preview after a download fills the DingTalk player's own slot (measured 1002×564, tracked by CSS `inset:0` with no JS geometry sync) instead of the small in-panel window, and the native player is paused while it plays so two audio tracks never stack — closing the preview resumes playback. **The preview's top-right bar switches live between two slots: 播放器 (player) and 互动/简介 (side column)** — the side slot fills the right-hand 互动/简介 column (measured 320×632, located structurally from `#live-room` plus the 互动/简介 tab text, never by the hashed classes that change every deploy); the choice is remembered for the next preview, and if the preferred slot is missing the other one is tried before falling back to the in-panel window. The anchors only trust stable page ids (`#ding_live_player`, falling back to `#J_player`); with no player mounted (e.g. not logged in) it falls back to the in-panel preview. The download flow is untouched.
 - **Filename timestamp**: append `_YYYYMMDD-HHmmss`.
 
 **Panel appearance**
 
+- **Panel docked into the side column (v3.2.0, experimental, off by default)**: switch it on in 更多设置 and the whole panel embeds under the 互动/简介 tabs the moment the page loads (never after parsing; if the column mounts late it retries for 15s). The panel joins the flow as the last sibling of the tab bar, so the tabs stay on top and untouched and the content area simply flexes and keeps scrolling (measured at both 1469 and 1180 viewport: tab bar 50px, panel 319/320 wide inside the column, hitTest of a tab point = TAB and of a content point = CONTENT, clicking 简介 still switches the view). Collapsing the panel shrinks it to the bar and hands the space straight back to the content (273px → 525px measured, 273px restored on expand). While docked, dragging and window re-positioning are disabled and every geometric value belongs to CSS; the halo keeps hugging the panel. A 1.5s watchdog re-attaches the panel if a React re-render evicts it, and if the side column disappears (narrow window / logged out) the panel falls back to floating and re-docks when it returns; the switch persists and stays floating when there is no column at all.
 - **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur and a light border, letting the player show through; the state persists across reloads. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content (v2.9.5 fix).
 - **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it. **v3.0.3 fix**: the horizontal clamp used to run only at drag time, and nothing recomputed it after a resize — drag the panel to the right edge and then shrink the window and most of it leaves the screen (measured: 240px of a 392px panel), the mouse can no longer reach it at all, and the only way back is reloading the page. The panel is now re-clamped against the last known position on every window resize, and repeated resizing does not accumulate drift.
 - **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
-- **Auto-collapse settings while dragging (v2.6.0)**: collapsible sections and the preview area fold away while you drag and are restored when you release; a toggle in 更多设置 (on by default) turns this off.
+- **Auto-collapse settings while dragging (v2.6.0)**: collapsible sections fold away while you drag and are restored when you release; a toggle in 更多设置 (on by default) turns this off.
 - **Viewport-aware panel (v2.6.1)**: the panel's height is capped to the available window height (`100vh - 140px`) with the remainder scrolling inside. **Fully expanded, the panel never exceeds the screen** — measured at 678px in a 700px-tall window, which comfortably covers ordinary laptop viewports.
 - **Compact 更多设置 (v2.6.0)**: number fields and dropdowns pair up on one row, and eight switches lay out in a two-column grid — roughly half the previous height, so options no longer need scrolling to find.
 - **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The default-state dropdown reads back the real initial state from a single source of truth, so the value shown always matches the panel's actual state (v1.9.3 fixed a mismatch where the panel was collapsed but the dropdown said "expanded").
@@ -287,7 +283,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 1. Open the replay page (`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`); the panel appears at the bottom-right and reads the link automatically.
 2. Optionally set **filename** (blank uses the replay title), **output format**, **clip range** (units auto-detected, blank means everything), concurrency and retries.
 3. Once the page has parsed, segments are pre-downloaded in the background and the log reports progress. Pressing "下载本页回放" then only has to merge and save; how long that takes depends on how much the pre-download already finished. The status line shows segments `n/N` → merge → save.
-4. With MP4 selected and the download successful, a preview player appears in the panel with **speed** control. TS cannot be previewed in a browser (see Known limitations).
+4. When the download finishes the status line shows `✅ 完成` and the file lands in the browser default download folder; since v3.2.0 no preview player and no speed control is popped into the panel.
 5. When you do not need it, press 「收起」 to shrink the panel to a slim bar at the bottom-right; click it to expand. The halo stays visible while downloading.
 6. You can also paste any replay link into the box and press download without staying on that page.
 
@@ -328,8 +324,6 @@ GitHub Actions runs three jobs on every push / PR: `node --check`, the unit test
 ## Known limitations
 
 - Clipping is aligned to slice boundaries by default (about 30s granularity). With 「帧级精确截取」 enabled it snaps to keyframes, but that needs the complete segment set to build a timeline, and it works for TS only (fMP4 falls back to slice alignment).
-- Preview **speed affects the in-panel playback only**, never the saved file — rewriting audio volume or playback speed requires re-encoding, which cannot be done reliably in the browser. Hand the `.ts` to ffmpeg for that.
-- `.ts` cannot be previewed in a browser `<video>` (Chromium does not decode MPEG-TS); use VLC / mpv / PotPlayer, or pick MP4 instead.
 - **The download halo's animation can look choppy on high-resolution displays** (reported on 4K / high-DPI). The halo's position and size already hug the panel correctly; only the motion is affected, never the download. The usual suspect — an expensive `stroke-dashoffset` animation — was measured and ruled out: frames cost the same with the animation on or off. Remaining directions and how to verify them are in the CHANGELOG's "Unreleased" section.
 - Replay signatures last about 10 days; press download once more after they expire.
 - `@connect *` is granted because HLS CDN hosts vary per replay (`dtliving-sz.dingtalk.com`, `dtlive-sz.dingtalk.com`, …). Replace it with explicit hosts if you prefer.

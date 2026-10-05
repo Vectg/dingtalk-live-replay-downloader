@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.1.0
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、内置预览(倍速)、内嵌播放器预览(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      3.2.0
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -1443,43 +1443,16 @@
             color:#5a5f6b;font-size:10px;margin-top:4px}
         #dlr-status:not(.hist)::before{content:'🕘';opacity:.55}
         #dlr-panel .err{color:#ff7a7a}
-        /* 输出框（预览播放器）的展开/收起动画（v2.6.0）。
-           display:none ↔ block 是瞬间切换、无法过渡，所以改用
-           grid-template-rows:0fr→1fr + opacity，与面板其他折叠区同一条曲线，
-           内容与外壳同步收放，不会出现「外壳缩完了内容还在」的错位。 */
-        #dlr-preview{height:0;overflow:hidden;opacity:0;
-            margin-top:0;border-top:1px solid transparent;padding-top:0;
-            transition:height 280ms cubic-bezier(0.16,1,0.3,1),
-                opacity 200ms ease-out,margin-top 280ms cubic-bezier(0.16,1,0.3,1),
-                padding-top 280ms cubic-bezier(0.16,1,0.3,1),
-                border-color 280ms ease-out}
-        #dlr-preview.show{opacity:1;margin-top:10px;border-top-color:#23262e;padding-top:10px}
-        /* 展开高度由 JS 按内容实测写内联 height（见 showPreview）。
-           不靠 CSS 的 max-height：钉钉页面样式表顺序会让展开值被收起值压住。 */
-        #dlr-preview .ph{position:relative;background:#000;border-radius:8px;overflow:hidden}
-        #dlr-preview video{display:block;width:100%;max-height:230px;background:#000}
-        #dlr-preview .px{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:0;
-            border-radius:5px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.4;margin:0}
-        #dlr-preview .pc{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
-        #dlr-preview .pn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7d828d}
-        /* 内嵌播放器预览 (v3.1.0, 实验性): 铺满钉钉播放器槽位.
-           槽位 #ding_live_player 实测 relative + overflow:hidden 且与 video 同几何,
-           所以 inset:0 贴合, 窗口缩放由 CSS 自动跟随 —— 无 JS 几何同步
-           (v3.0.9 教训: 能让 CSS 拥有几何就别用 JS 追). z-index 只压过页面内容,
-           不越过面板自身的 999999, 面板拖到播放器上方时仍是面板可点. */
-        #dlr-embed-box{position:absolute;left:0;top:0;right:0;bottom:0;z-index:20;
-            background:#000;display:flex}
-        #dlr-embed-box video{flex:1;min-width:0;min-height:0;width:100%;height:100%;
-            object-fit:contain;background:#000;display:block}
-        #dlr-embed-box .ebar{position:absolute;top:6px;right:6px;z-index:2;display:flex;
-            gap:6px;align-items:center;background:rgba(0,0,0,.55);border-radius:6px;
-            padding:3px 6px;max-width:calc(100% - 12px)}
-        #dlr-embed-box .ename{color:#c9cdd6;font-size:11px;overflow:hidden;
-            text-overflow:ellipsis;white-space:nowrap;max-width:240px}
-        #dlr-embed-box .ebar select{background:#23262e;color:#c9cdd6;border:1px solid #3a3f4b;
-            border-radius:5px;font-size:11px;padding:1px 4px;margin:0}
-        #dlr-embed-box .px{background:rgba(255,255,255,.12);color:#fff;border:0;
-            border-radius:5px;padding:2px 8px;cursor:pointer;font-size:12px;line-height:1.4;margin:0}
+        /* 面板内嵌侧栏 (v3.2.0, 实验性): 面板是页签条父容器的流内最后一个子块,
+           几何全交给 CSS —— 不用 JS 追 (v3.0.9 教训). 页签固定在上方永不被遮挡,
+           内容区 flex 自行让位且照常滚动; 收起(.mini)后只剩横条, 空间全部还给互动. */
+        #dlr-panel.docked{position:relative!important;inset:auto!important;
+            width:100%!important;padding:0 8px 8px!important;margin:0;z-index:5;
+            max-height:none;transition:none}
+        #dlr-panel.docked .drag{cursor:default}
+        #dlr-panel.docked .body{max-height:min(300px,42vh);width:100%}
+        #dlr-panel.docked.mini{width:100%!important;padding:0 8px 8px!important}
+        #dlr-panel.docked.mini .body{width:100%}
         #dlr-panel .tip{font-size:11px;color:#6d727c;margin-top:3px}
         /* 更多设置：可折叠小面板 */
         #dlr-panel .more-toggle{display:flex;align-items:center;justify-content:space-between;
@@ -1703,7 +1676,6 @@
             <button id="dlr-diag" title="把版本, 解析结果, 失败片号, 未捕获异常等导出为 .txt, 便于排查问题">📋 导出诊断日志</button>
             <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8, 可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
         </div>
-        <div id="dlr-preview"></div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
             <div class="more-body" id="dlr-more-b"><div>
@@ -1740,8 +1712,8 @@
                     <label class="chk" title="下载结束(成功保存或失败报错)时弹出系统通知, 点击可回到面板. 默认关闭.">
                         <input type="checkbox" id="dlr-notify-desktop">完成/失败通知</label>
                     <label class="chk"><input type="checkbox" id="dlr-notify-sound">完成/失败提示音</label>
-                    <label class="chk" title="实验性, 默认关闭. 开启后下载完成的 MP4 预览铺满钉钉播放器位置(随窗口缩放自适应), 预览右上角可切换「播放器 / 互动·简介侧栏」两个位置, 并暂停原生播放避免双音轨, 关闭预览即恢复. 页面上找不到播放器时(如未登录)自动退回面板内预览.">
-                        <input type="checkbox" id="dlr-embed">内嵌播放器(实验性)</label>
+                    <label class="chk" title="实验性, 默认关闭. 打开后整个面板立刻内嵌到右侧 互动/简介 侧栏的页签下方(页面一加载就嵌, 不是等解析完才嵌), 页签与互动内容都在下方照常可用、不被遮挡; 收起面板即可把空间还给互动. 页面上找不到侧栏时(如未登录)自动保持悬浮.">
+                        <input type="checkbox" id="dlr-dock">面板内嵌侧栏(实验性)</label>
                 </div>
                 <div class="tip">预取播放地址与切片索引, 打开页面后无需等待即可直接下载.</div>
             </div></div>
@@ -1767,216 +1739,66 @@
         return { roomId, liveUuid };
     }
 
-    // ---------- 内嵌播放器锚点 (v3.1.0, 实验性) ----------
-    // 只认页面稳定 id 与结构 (实测 2026-10-05, 登录态):
-    //   slot='player' (默认): #ding_live_player 相对定位且 overflow:hidden, 与 video
-    //     同几何 (1002x564); #J_player 是 prism-player 根, 同几何兜底.
-    //   slot='side': 右侧「互动/简介」侧栏列 —— #live-room(稳定 id)的子列里, 不包含
-    //     播放器、且带「互动/简介」页签文本的那一列 (实测 320x632, position:relative,
-    //     可直接 inset:0). 侧栏没有稳定 id, 所以按结构 + 文本特征定位, 不猜 class.
-    // 找不到 → 返回 null, 调用方退回面板内预览 (未登录页播放器不挂载也走这条).
-    // 绝不碰 _903bde0b01 / _7da30f0d4c 这类 CSS-module 哈希 class: 每次发版都会变.
-    function embedAnchor(doc, slot) {
+    // ---------- 面板内嵌侧栏的挂载宿主 (v3.2.0, 实验性) ----------
+    // 结构 (登录态实测 2026-10-05): #live-room 是稳定 id, 两个子列 = 播放器列 + 侧栏列
+    // (320x632, position:relative); 侧栏列内部是 flex 纵列 [绝对定位覆盖层,
+    // 页签条 319x50, 内容区 flex:1 1 0%]. 侧栏列没有稳定 id, 全是 CSS-module 哈希
+    // class, 所以只按 结构 + 几何 + 页签文本 定位, 绝不猜 class (每次发版都会变).
+    //
+    // 返回「页签条的父容器」: 面板 append 成它最后一个流内子块 → 页签固定在上、永不
+    // 被遮挡, 内容区按 flex 自行让位且照常滚动 —— 用户硬要求: 内嵌不许影响互动/简介.
+    // 找不到侧栏 (未登录页不挂载) → null, 调用方保持悬浮.
+    function dockMount(doc) {
         const d = doc || document;
-        if (slot === 'side') {
-            const lr = d.getElementById('live-room');
-            if (!lr || !lr.children) return null;
-            const player = d.getElementById('ding_live_player') || d.getElementById('J_player');
-            for (let i = 0; i < lr.children.length; i++) {
-                const col = lr.children[i];
-                if (player && col.contains && col.contains(player)) continue;   // 播放器列跳过
-                if (col.textContent && /互动|简介/.test(col.textContent)) return col;
+        const lr = d.getElementById('live-room');
+        if (!lr || !lr.children) return null;
+        const player = d.getElementById('ding_live_player') || d.getElementById('J_player');
+        let col = null;
+        for (let i = 0; i < lr.children.length; i++) {
+            const c = lr.children[i];
+            if (player && c.contains && c.contains(player)) continue;   // 播放器列跳过
+            if (c.textContent && /互动|简介/.test(c.textContent)) { col = c; break; }
+        }
+        if (!col || !col.children || !col.children.length || !col.getBoundingClientRect) return null;
+        let cr = null;
+        try { cr = col.getBoundingClientRect(); } catch (e) { }
+        if (!cr || cr.width <= 0 || cr.height <= 0) return null;
+        const posOf = (el) => {
+            try {
+                if (typeof getComputedStyle === 'function') {
+                    const p = getComputedStyle(el).position;
+                    if (p) return p;
+                }
+            } catch (e) { }
+            return (el.style && el.style.position) || '';
+        };
+        const inCol = (r) => r && r.width > 0 && r.height > 0 &&
+            r.left >= cr.left - 2 && r.top >= cr.top - 2 &&
+            r.left + r.width <= cr.left + cr.width + 2 &&
+            r.top + r.height <= cr.top + cr.height + 2;
+        // 前序找「页签条」: 高 ≤64px(实测 50)、在列内、非 absolute/fixed、文本含互动/简介.
+        // 绝对定位覆盖层整棵剪掉 (里面也可能有小块提到「互动」但不是页签).
+        let budget = 2000;
+        const visit = (node) => {
+            const kids = node.children;
+            for (let i = 0; i < kids.length; i++) {
+                if (budget-- <= 0) return null;
+                const c = kids[i];
+                if (!c || !c.getBoundingClientRect) continue;
+                const pos = posOf(c);
+                if (pos === 'absolute' || pos === 'fixed') continue;   // 剪掉覆盖层子树
+                let r = null;
+                try { r = c.getBoundingClientRect(); } catch (e) { }
+                if (!r) continue;
+                if (r.height > 0 && r.height <= 64 && inCol(r) &&
+                    /互动|简介/.test(c.textContent || '')) return c;
+                const deeper = visit(c);
+                if (deeper) return deeper;
             }
             return null;
-        }
-        return d.getElementById('ding_live_player') || d.getElementById('J_player') || null;
-    }
-
-    // 原生 video 永远从「播放器槽位」里找: 侧栏槽位下 anchor.querySelector 抓不到它,
-    // 暂停/恢复就会失灵. 跳过我们自己的 #dlr-embed-box 里的 video, 免得把预览当原生.
-    function nativeVideoInPlayer() {
-        const pa = embedAnchor(document, 'player');
-        if (!pa) return null;
-        const vids = pa.querySelectorAll('video');
-        for (let i = 0; i < vids.length; i++) {
-            if (!vids[i].closest || !vids[i].closest('#dlr-embed-box')) return vids[i];
-        }
-        return null;
-    }
-
-    // 内嵌预览的现场: 暂停记录(关闭时恢复原生播放) + 当前 blob/名字/槽位(换槽时复用).
-    // 连续两次内嵌共用同一份 was, 否则第二次会覆盖成 false, 关闭后原生播放回不来.
-    let embedState = { nv: null, was: false, blob: null, name: '', slot: 'player' };
-
-    function showPreviewEmbed(anchor, blob, name, slot) {
-        const old = document.getElementById('dlr-embed-box');
-        if (old) {
-            // 换场/换槽时先吊销旧 blob, 否则连续挂载会泄漏 URL
-            const ov = old.querySelector('video');
-            if (ov && ov.src) { try { URL.revokeObjectURL(ov.src); } catch (e) { } }
-            try { old.remove(); } catch (e) { }
-        }
-        // 原生 video 必须在插入我们的 video 之前定好, 否则可能抓到自己
-        const nv = nativeVideoInPlayer();
-        if (embedState.nv !== nv) embedState = { nv: nv, was: !!(nv && !nv.paused), blob: null, name: '', slot: slot };
-        else embedState.slot = slot;
-        if (nv && !nv.paused) { try { nv.pause(); } catch (e) { } }
-        embedState.blob = blob;
-        embedState.name = name;
-        const wrap = document.createElement('div');
-        wrap.id = 'dlr-embed-box';
-        const v = document.createElement('video');
-        v.src = URL.createObjectURL(blob);
-        v.controls = true;
-        wrap.appendChild(v);
-        const bar = document.createElement('div');
-        bar.className = 'ebar';
-        const cap = document.createElement('span');
-        cap.className = 'ename';
-        cap.textContent = '预览:' + name;
-        bar.appendChild(cap);
-        // 位置: 播放器 / 互动·简介侧栏, 实时换槽 (v3.1.0). 找不到目标就留在原地并说明.
-        const slotSel = document.createElement('select');
-        slotSel.title = '内嵌位置';
-        [['player', '播放器'], ['side', '互动/简介侧栏']].forEach((pair) => {
-            const o = document.createElement('option');
-            o.value = pair[0];
-            o.textContent = pair[1];
-            slotSel.appendChild(o);
-        });
-        slotSel.value = slot;
-        slotSel.addEventListener('change', () => {
-            const next = slotSel.value;
-            const target = embedAnchor(document, next);
-            if (!target) {
-                slotSel.value = embedState.slot;
-                appendLog('页面上找不到「' + (next === 'side' ? '互动/简介侧栏' : '播放器') + '」, 保持原位置');
-                return;
-            }
-            try { GM_setValue('dlr_embed_slot', next); } catch (e) { }
-            appendLog('内嵌位置已切换到「' + (next === 'side' ? '互动/简介侧栏' : '播放器') + '」');
-            showPreviewEmbed(target, embedState.blob, embedState.name, next);
-        });
-        bar.appendChild(slotSel);
-        const sp = document.createElement('select');
-        sp.title = '倍速';
-        [0.5, 0.75, 1, 1.25, 1.5, 2].forEach((r) => {
-            const o = document.createElement('option');
-            o.value = String(r);
-            o.textContent = r + '×';
-            if (r === 1) o.selected = true;
-            sp.appendChild(o);
-        });
-        sp.addEventListener('change', () => { v.playbackRate = parseFloat(sp.value); });
-        bar.appendChild(sp);
-        const close = document.createElement('button');
-        close.className = 'px';
-        close.textContent = '✕';
-        close.title = '关闭预览';
-        close.addEventListener('click', () => {
-            try { URL.revokeObjectURL(v.src); } catch (e) { }
-            wrap.remove();
-            const was = embedState.was;
-            if (embedState.nv && was) {
-                try { const p = embedState.nv.play(); if (p && p.catch) p.catch(() => { }); } catch (e) { }
-            }
-            embedState = { nv: null, was: false, blob: null, name: '', slot: embedState.slot };
-            appendLog('内嵌预览已关闭' + (was ? ', 原生播放已恢复' : ''));
-        });
-        bar.appendChild(close);
-        wrap.appendChild(bar);
-        anchor.appendChild(wrap);
-        appendLog('预览已内嵌到' + (slot === 'side' ? '互动/简介侧栏' : '播放器位置') +
-            ' (实验性, 右上角可换位置, 更多设置里可关)');
-    }
-
-    // ---------- 内置预览（倍速 / 音量） ----------
-    function showPreview(blob, name) {
-        let box = $('dlr-preview');
-        if (!box) return;
-        // v3.1.0: 内嵌播放器预览 (实验性). 开着 → 按上次选择的槽位挂载 (播放器/侧栏),
-        // 首选槽位不在就试另一个, 都没有 (未登录页) → 原路径, 行为不变.
-        let emb = null;
-        try { emb = document.getElementById('dlr-embed'); } catch (e) { }
-        let slot = 'player';
-        try { slot = (GM_getValue('dlr_embed_slot', 'player') === 'side') ? 'side' : 'player'; } catch (e) { }
-        let anchor = null, useSlot = null;
-        if (emb && emb.checked) {
-            anchor = embedAnchor(document, slot);
-            useSlot = slot;
-            if (!anchor) {
-                const alt = (slot === 'side') ? 'player' : 'side';
-                anchor = embedAnchor(document, alt);
-                useSlot = anchor ? alt : null;
-            }
-        }
-        if (anchor) {
-            const oldV = box.querySelector('video');
-            if (oldV && oldV.src) { try { URL.revokeObjectURL(oldV.src); } catch (e) { } }
-            box.innerHTML = '';
-            box.classList.remove('show');
-            box.style.opacity = '0';
-            box.style.height = '0px';
-            showPreviewEmbed(anchor, blob, name, useSlot);
-            return;
-        }
-        box.innerHTML = '';
-        const holder = document.createElement('div');
-        holder.className = 'ph';
-        const close = document.createElement('button');
-        close.className = 'px';
-        close.textContent = '✕';
-        close.title = '关闭预览';
-        const v = document.createElement('video');
-        v.src = URL.createObjectURL(blob);
-        v.controls = true;
-        holder.appendChild(close);
-        holder.appendChild(v);
-        box.appendChild(holder);
-
-        // 控制行：只留倍速。音量不单独做滑块——原生 controls 里已经有音量按钮，
-        // 再加一个只是重复操作，还占掉面板宽度。
-        const ctl = document.createElement('div');
-        ctl.className = 'pc';
-        const sp = document.createElement('select');
-        sp.title = '倍速';
-        [0.5, 0.75, 1, 1.25, 1.5, 2].forEach((r) => {
-            const o = document.createElement('option');
-            o.value = String(r);
-            o.textContent = r + '×';
-            if (r === 1) o.selected = true;
-            sp.appendChild(o);
-        });
-        sp.addEventListener('change', () => { v.playbackRate = parseFloat(sp.value); });
-        const cap = document.createElement('div');
-        cap.className = 'pn';
-        cap.textContent = '预览:' + name;
-        ctl.appendChild(cap);
-        ctl.appendChild(sp);
-        box.appendChild(ctl);
-
-        close.addEventListener('click', () => {
-            try { URL.revokeObjectURL(v.src); } catch (e) {}
-            box.innerHTML = '';
-            box.classList.remove('show');   // 收起（带动画）
-            box.style.opacity = '0';
-            box.style.height = '0px';
-        });
-        // 展开（带动画）。用 class + 内联 height，不用 display（display 无法过渡）。
-        void box.offsetWidth;               // 强制回流，确保连续两次调用也能重放动画
-        box.classList.add('show');
-        // 实测内容高度写内联：内联优先级高于样式表，不受 CSS 特异性竞争影响。
-        // 量高前先解除 height 约束：收起态下 scrollHeight 恒为 0。
-        // 同 setMore：opacity 与高度都用内联（class 规则在本页不可靠）。
-        box.style.opacity = '1';
-        box.style.height = '300px';
-        setTimeout(() => {
-            const prevH = box.style.height;
-            box.style.height = 'auto';
-            const h = box.scrollHeight;
-            box.style.height = prevH;
-            if (h > 0) box.style.height = h + 'px';
-        }, 0);
+        };
+        const bar = visit(col);
+        return bar ? (bar.parentElement || col) : null;
     }
 
     // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
@@ -2959,10 +2781,6 @@
             progressSet(P.save, '保存');
             appendLog('⑥ 保存文件 ...');
             await downloadBlob(blob, outName);
-            // MP4 直接在面板内预览（TS 浏览器无法解码，不预览）
-            if (wantMp4) {
-                try { showPreview(blob, outName); } catch (e) { /* 预览失败不影响下载 */ }
-            }
             setStatus('✅ 完成:' + outName + ' (已存入浏览器默认下载文件夹)');
             progressDone(true);
             diagRun(true, outName + ' · ' + fmtBytes(blob.size) + ' · ' + segs.length + '  片');
@@ -3086,7 +2904,7 @@
         //     面板自己的高度/宽度过渡还在跑 —— 光环从此停在旧尺寸上不动了。
         //     表现就是「光环在外面框出一大块地方」/「展开后光环不跟着变大」。
         //  2) 面板尺寸变化的**原因**不只有过渡：更多设置展开（子元素 height 过渡）、
-        //     预览区、状态栏换行、窗口缩放、字体加载，都不一定在面板上触发 transition，
+        //     状态栏换行、窗口缩放、字体加载，都不一定在面板上触发 transition，
         //     光环就完全失联。
         //  3) 只靠事件时机补一次 syncRing，补在动画中段（错位 20~187px）。
         //
@@ -3234,9 +3052,6 @@
         // 解析阶段后台预下载（v2.7.0）：默认开。开启后打开页面即在后台拉切片，
         // 用户点「下载」时几乎瞬间完成。关掉则行为与 2.6.x 完全一致。
         bindChk('dlr-predownload', 'dlr_predownload', true);
-        // 内嵌播放器预览 (v3.1.0, 实验性): 默认关. 开关状态只决定 showPreview 走哪条
-        // 渲染分支, 锚点缺失时无论如何都退回面板内预览, 不碰下载状态机.
-        bindChk('dlr-embed', 'dlr_embed', false);
 
         // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下。
         // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。
@@ -3779,6 +3594,7 @@
         // 存下来的 left/top 定值，窗口一小就跑到屏幕外去了（见下面的 resize 处理）。
         let lastPos = null;
         const applyPos = (x, y) => {
+            if (panel.classList.contains('docked')) return;   // 内嵌态几何归 CSS, 拖拽/resize 不写位置
             const r = panel.getBoundingClientRect();
             const p = posToRightBottom(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
             panel.style.left = p.left;
@@ -3810,6 +3626,79 @@
             if (!m) return;
             applyPos(parseFloat(m[1]), parseFloat(m[2]));
         };
+
+        // ---------- 面板内嵌侧栏 (v3.2.0, 实验性) ----------
+        // 几何全部由 CSS 拥有: 内嵌态在 applyPos / mousedown 两处已挡,
+        // 光环照旧按 .body 实测跟随 (ringTarget 不用改, 3.0.9 的参照对象不变).
+        let dockHost = null;
+        const docked = () => panel.classList.contains('docked');
+        function dockPanel() {
+            const host = dockMount(document);
+            if (!host) return false;
+            panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
+            panel.classList.add('docked');
+            host.appendChild(panel);
+            dockHost = host;
+            try { syncRing(); } catch (e) { }
+            return true;
+        }
+        function undockPanel() {
+            if (!docked()) return;
+            panel.classList.remove('docked');
+            dockHost = null;
+            document.body.appendChild(panel);
+            try { restorePos(); } catch (e) { }   // 回到悬浮: 拖过的坐标 / 没拖过就是右下角
+            try { syncRing(); } catch (e) { }
+        }
+        const dockChk = $('dlr-dock');
+        if (dockChk) {
+            let want = false;
+            try { want = !!GM_getValue('dlr_dock', false); } catch (e) { }
+            dockChk.checked = want;
+            dockChk.addEventListener('change', () => {
+                try { GM_setValue('dlr_dock', dockChk.checked); } catch (e) { }
+                if (dockChk.checked) {
+                    if (dockPanel()) appendLog('面板已内嵌到互动/简介页签下方 (实验性)');
+                    else {
+                        dockChk.checked = false;
+                        try { GM_setValue('dlr_dock', false); } catch (e) { }
+                        appendLog('页面上没有 互动/简介 侧栏, 面板保持悬浮 (未登录页不挂载侧栏)');
+                    }
+                } else {
+                    undockPanel();
+                    appendLog('面板已回到悬浮位置');
+                }
+            });
+            // 一开始就嵌入 (用户要求: 不是等解析完才嵌). 侧栏可能比脚本晚上线, 15s 内每秒重试.
+            if (want) {
+                let tries = 0;
+                const tryDock = () => {
+                    if (panel.classList.contains('docked')) return;
+                    if (dockPanel()) { appendLog('面板已内嵌到互动/简介页签下方 (实验性)'); return; }
+                    if (++tries <= 15) setTimeout(tryDock, 1000);
+                    else {
+                        dockChk.checked = false;
+                        try { GM_setValue('dlr_dock', false); } catch (e) { }
+                        appendLog('页面上没有 互动/简介 侧栏, 面板保持悬浮');
+                    }
+                };
+                tryDock();
+            }
+            // React 切页签/重渲染可能把面板从宿主里甩掉: 1.5s 校验一次, 脱落就挂回去;
+            // 侧栏整个消失(退出登录)则退回悬浮. 只读判断 + appendChild, 不写任何几何.
+            setInterval(() => {
+                try {
+                    if (docked()) {
+                        if (!panel.isConnected || !dockHost || !dockHost.contains(panel)) {
+                            if (!dockPanel()) { undockPanel(); appendLog('侧栏已消失, 面板回到悬浮位置'); }
+                        }
+                    } else if (dockChk.checked) {
+                        dockPanel();   // 开关开着但还没嵌上(侧栏刚上线) → 补挂
+                    }
+                } catch (e) { }
+            }, 1500);
+        }
+
         // 拖拽把手有两个：展开态是标题区(.bin)，收起态是横条(.expand)。
         // 只绑一个的话，收起后就抓不到东西了——用户反馈的正是这个。
         const handles = panel.querySelectorAll('.drag');
@@ -3834,14 +3723,6 @@
                 mb.dataset.preDragOpen = '1';
                 setMore(false);
             }
-            // 预览区直接隐藏（有内容时它会自己撑高，留着反而碍事），
-            // 但记下原值，拖完恢复——不能一拖就永久消失。
-            const pv = $('dlr-preview');
-            if (pv && pv.classList.contains('show')) {
-                pv.dataset.preDragShown = '1';
-                pv.classList.remove('show');
-                pv.style.height = '0px';
-            }
         };
         // 只有落在「控件之外」的按下才开始拖拽。
         // 这条很关键：拖拽区 .bin 包住了整个表单（链接框/文件名/分辨率/截取…），
@@ -3861,6 +3742,7 @@
             handle.addEventListener('mousedown', (e) => {
                 // 只认左键；别抢输入框/按钮上的手势
                 if (e.button !== 0) return;
+                if (panel.classList.contains('docked')) return;   // 内嵌态不可拖 (v3.2.0)
                 // 落在控件上 → 完全不管，浏览器原生行为（聚焦、展开下拉）照旧
                 if (onControl(e.target, handle)) return;
                 // 收起态横条上单击是「展开」，拖动阈值内不算拖——否则
@@ -3895,19 +3777,9 @@
             dragging = false;
             dragPending = false;
             panel.classList.remove('dragging');
-            // 恢复拖拽时被折叠的更多设置与预览区
+            // 恢复拖拽时被折叠的更多设置
             const mb2 = $('dlr-more-b');
             if (mb2 && mb2.dataset.preDragOpen === '1') { setMore(true); delete mb2.dataset.preDragOpen; }
-            const pv2 = $('dlr-preview');
-            if (pv2 && 'preDragShown' in pv2.dataset) {
-                pv2.classList.add('show');
-                const prevH2 = pv2.style.height;
-                pv2.style.height = 'auto';
-                const hh = pv2.scrollHeight;
-                pv2.style.height = prevH2 || '0px';
-                if (hh > 0) pv2.style.height = hh + 'px';
-                delete pv2.dataset.preDragShown;
-            }
             const r = panel.getBoundingClientRect();
             // 必须 try 保护：这里若抛错会跳过下面的 suppressExpandClickAt 赋值，
             // 结果是「拖完面板反而弹开」。

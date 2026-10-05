@@ -30,7 +30,7 @@ section('extract（抽取器自检）');
     for (const name of ['sanitize', 'fmtBytes', 'parseTimeArg', 'clipSegments',
         'parseAttributes', 'fetchAndParseM3u8', 'fixMp4Duration', 'parseSpsToDims',
         'findSpsCandidates', 'boxIter', 'mergeBuffers', 'parseUrl',
-        'embedAnchor']) {
+        'dockMount']) {
         let code = '';
         try {
             code = extractFn(name);
@@ -1142,40 +1142,70 @@ section('智能调度');
     eq([st.min, st.max], [1, 8], 'stats 含区间');
     eq(st.lastSpeed, 12345, 'stats 含最近速度');
 }
-    section('内嵌播放器锚点 embedAnchor（v3.1.0）');
+    section('面板内嵌宿主 dockMount（v3.2.0）');
     {
-        const { embedAnchor } = loadFns(['embedAnchor']);
-        const mk = (ids) => ({ getElementById: (id) => (ids.indexOf(id) >= 0 ? { id: id } : null) });
-        eq(embedAnchor(mk(['ding_live_player'])).id, 'ding_live_player', '优先 ding_live_player');
-        eq(embedAnchor(mk(['J_player'])).id, 'J_player', '缺主锚点 → J_player 兜底');
-        eq(embedAnchor(mk(['J_player', 'ding_live_player'])).id, 'ding_live_player', '两者都在 → 取 ding_live_player');
-        eq(embedAnchor(mk(['Root'])), null, '都没有 → null（未登录页退回面板内预览）');
-        eq(embedAnchor(mk([])), null, '空页面 → null');
-        eq(embedAnchor(mk(['ding_live_player']), 'player').id, 'ding_live_player', "slot='player' 显式指定同默认");
+        const { dockMount } = loadFns(['dockMount']);
+        const el = (o) => Object.assign({
+            children: [], textContent: '', style: {}, parentElement: null,
+            contains: () => false,
+            getBoundingClientRect: function () { return this._r || { left: 0, top: 0, width: 10, height: 10 }; },
+        }, o || {});
+        const doc = (roomChildren, withPlayer) => {
+            const byId = {};
+            if (withPlayer !== false) byId['ding_live_player'] = el({ id: 'ding_live_player' });
+            byId['live-room'] = { id: 'live-room', children: roomChildren };
+            return { getElementById: (id) => (id in byId ? byId[id] : null) };
+        };
+        const sideCol = (kids) => {
+            const col = el({ textContent: '互动简介推荐 群消息若干', children: kids,
+                _r: { left: 1076, top: 82, width: 320, height: 632 } });
+            kids.forEach((c) => { c.parentElement = col; });
+            return col;
+        };
+        const TAB = (r, text, extra) => el(Object.assign({
+            textContent: text === undefined ? '互动简介推荐' : text,
+            _r: r || { left: 1076, top: 83, width: 319, height: 50 },
+        }, extra || {}));
 
-        // slot='side'：#live-room 的子列里，不含播放器且带「互动/简介」文本的那一列
-        const col = (name, hasPlayer, text) => ({
-            name, textContent: text, children: [],
-            contains: () => hasPlayer,
-        });
-        const playerCol = col('playerCol', true, '简介互动');   // 含播放器 → 跳过
-        const sideCol = col('sideCol', false, '互动 简介 AI听记');
-        const mkRoom = (children, ids) => ({
-            getElementById: (id) => {
-                if (id === 'live-room') return { id: 'live-room', children };
-                if (ids && ids.indexOf(id) >= 0) return { id };
-                return null;
-            },
-        });
-        const roomBoth = mkRoom([playerCol, sideCol], ['ding_live_player']);
-        eq(embedAnchor(roomBoth, 'side').name, 'sideCol', "side: 跳过播放器列, 取带页签文本的列");
-        eq(embedAnchor(mkRoom([playerCol], ['ding_live_player']), 'side'), null, 'side: 只有播放器列 → null');
-        eq(embedAnchor(mkRoom([col('a', false, '无关文本'), col('b', false, '还是无关')], []), 'side'), null,
-            'side: 没有「互动/简介」文本 → null（不猜哈希 class）');
-        eq(embedAnchor(mkRoom([col('only', false, '简介')], []), 'side').name, 'only',
-            'side: 播放器缺失时按文本取列');
-        eq(embedAnchor({ getElementById: () => null }, 'side'), null, 'side: 无 #live-room → null');
-        eq(embedAnchor(mk(['ding_live_player']), undefined).id, 'ding_live_player', '不传 slot = 默认 player');
+        // A 实测结构: 侧栏列 → flex 列 → [绝对覆盖层, 页签条 50px, 内容区 581px]
+        const overlay = TAB({ left: 1076, top: 83, width: 319, height: 631 }, '互动一些消息',
+            { style: { position: 'absolute' } });
+        const barA = TAB();
+        const contentA = TAB({ left: 1076, top: 133, width: 319, height: 581 }, '互动消息列表');
+        const hostA = el({ children: [overlay, barA, contentA], _r: { left: 1076, top: 82, width: 320, height: 632 } });
+        [overlay, barA, contentA].forEach((c) => { c.parentElement = hostA; });
+        eq(dockMount(doc([sideCol([hostA])])) === hostA, true, 'A 实测结构: 返回页签条的父(flex 列)');
+
+        // B 扁平结构: 侧栏列直接挂 [页签条, 内容区] → 页签条父 = 列本身
+        const barB = TAB();
+        const colB = sideCol([barB, TAB({ left: 1076, top: 133, width: 319, height: 581 }, '互动消息')]);
+        eq(dockMount(doc([colB])) === colB, true, 'B 扁平结构: 页签条父 = 侧栏列');
+
+        // C 绝对定位的小覆盖层(带「互动」)必须被剪掉, 不能当成页签条
+        const overlaySm = TAB({ left: 1076, top: 90, width: 200, height: 40 }, '互动', { style: { position: 'absolute' } });
+        const hostC = el({ children: [], _r: { left: 1076, top: 82, width: 320, height: 632 } });
+        const barC = TAB(); barC.parentElement = hostC; hostC.children.push(barC);
+        eq(dockMount(doc([sideCol([overlaySm, hostC])])) === hostC, true, 'C absolute 覆盖层被剪掉');
+
+        // D 没有 ≤64px 的页签条 → null (保持悬浮)
+        eq(dockMount(doc([sideCol([TAB({ left: 1076, top: 133, width: 319, height: 581 }, '互动简介都在这里')])])), null,
+            'D 只有高块 → null');
+
+        // E 页签条越出侧栏范围 → 不算
+        eq(dockMount(doc([sideCol([TAB({ left: 700, top: 83, width: 101, height: 40 }, '互动简介')])])), null,
+            'E 越界页签条 → null');
+
+        // F 无 #live-room / 无含页签文本的列 → null
+        eq(dockMount({ getElementById: () => null }), null, 'F1 无 #live-room → null');
+        eq(dockMount(doc([el({ textContent: '无关列', children: [], _r: { left: 1076, top: 82, width: 320, height: 632 } })])), null,
+            'F2 列文本无 互动/简介 → null');
+
+        // G 含播放器的列 (contains=true) 先被跳过, 即使它文本里也有页签词
+        const playerCol = el({ textContent: '互动简介', contains: () => true,
+            _r: { left: 68, top: 150, width: 1002, height: 632 } });
+        const barG = TAB();
+        const colG = sideCol([barG]);
+        eq(dockMount(doc([playerCol, colG])) === colG, true, 'G 播放器列被跳过 → 取侧栏列');
     }
 }   // ← 关闭 async function main()
 
