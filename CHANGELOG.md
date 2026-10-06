@@ -3,6 +3,12 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.6.1] - 2026-10-06
+### 修复
+- **内嵌到侧栏后面板右缘的白底滚动条**: `.bin` / `.body` 规则里写了标准属性 `scrollbar-width:thin`, Chromium 见到标准属性就忽略同规则的 `::-webkit-scrollbar` 深色定制, 滚动条渲染回浏览器默认白底样式 (白轨 + 灰滑块, 与深色面板割裂; 截图像素实测: 滑块 319/540 反推内容约 915px, 正是 `.bin` 更多设置全开的实测高度). 内嵌态现在直接隐藏这两处滚动条外观 (`scrollbar-width:none`); 滚轮 / 触摸板 / 键盘滚动全部保留, 悬浮态外观不变.
+### 修复 (兜底)
+- 若面板把钉钉侧栏列撑得比视口高、列自身冒出原生滚动条, 内嵌期间同样隐藏: dock 后沿祖先链找第一个真正溢出的滚动容器打 `data-dlr-nosb` 标记交给 CSS, 1.5s 守护每拍幂等重打 (列布局变化 / React 重建后仍生效), undock / 侧栏消失时摘除. 只藏外观, 不改任何布局与滚动能力.
+
 ## [3.6.0] - 2026-10-06
 ### 变更
 - **导出合并为一个**：面板底部的「📋 导出诊断日志」「📄 导出 m3u8」「💬 导出聊天记录」三个按钮连同聊天格式小下拉, 合并为**一个下拉 + 一个「⬇ 导出」按钮**。下拉按内容分组: 诊断日志 (.txt)、m3u8 播放列表 (.m3u8)、聊天记录 (.txt / .json / .csv / .html), 选好点导出即可; 当前选择写入本地存储, 下次打开保持.
@@ -821,9 +827,10 @@ tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界
 [3.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.4.0...v3.5.0
 [3.5.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...v3.5.1
 [3.5.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...v3.5.2
+[3.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...v3.6.0
 [3.5.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...v3.5.3
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.0...HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.1...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1

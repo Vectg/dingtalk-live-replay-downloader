@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.0
+// @version      3.6.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1688,6 +1688,17 @@
         #dlr-panel.docked.mini #dlr-dock-resize{display:none}
         /* 悬浮态高度随内容自适应, 把手无效: 隐藏, 顺带让出标题栏顶部的拖动区域 (v3.5.2) */
         #dlr-panel:not(.docked) #dlr-dock-resize{display:none}
+        /* 内嵌态隐藏滚动条外观 (v3.6.1): .bin/.body 上的 scrollbar-width:thin 是标准属性,
+           Chromium 见到它就忽略同规则的 ::-webkit-scrollbar 深色定制, 渲染回浏览器默认
+           白底滚动条 (白轨+灰滑块, 与深色面板割裂; 截图实测滑块比例 319/540 反推内容
+           ≈915px, 正是 .bin 更多设置全开的 937px)。只藏外观 —— 滚轮/触摸板/键盘滚动
+           全部保留; 悬浮态不受影响。 */
+        #dlr-panel.docked .bin,#dlr-panel.docked .body{scrollbar-width:none;-ms-overflow-style:none}
+        #dlr-panel.docked .bin::-webkit-scrollbar,#dlr-panel.docked .body::-webkit-scrollbar{width:0;height:0;display:none}
+        /* 兜底: 面板撑高把钉钉侧栏列弄溢出时, 列自己也会冒原生滚动条 —— JS 在 dock 时
+           向上探测第一个真正在滚的祖先打 data-dlr-nosb, undock 时摘除。 */
+        [data-dlr-nosb]{scrollbar-width:none;-ms-overflow-style:none}
+        [data-dlr-nosb]::-webkit-scrollbar{width:0;height:0;display:none}
         #dlr-panel.docked.mini .body{width:100%}
         /* aria2 区块 (v3.3.0, 实验性): 主机/端口/密钥/目录 + 状态行 + 测试按钮 */
         #dlr-aria2-box{margin:6px 0;padding:6px 8px;border:1px solid #23262e;border-radius:6px}
@@ -4214,11 +4225,13 @@
             dockHost = host;            // 入槽后重算高度: 上限依赖本页的页签条位置。
             try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
             try { syncRing(); } catch (e) { }
+            try { markScrollHost(); } catch (e) { }
             return true;
         }
         function undockPanel() {
             if (!docked()) return;
             panel.classList.remove('docked');
+            try { unmarkScrollHost(); } catch (e) { }
             dockHost = null;
             document.body.appendChild(panel);
             // 回悬浮: 清掉内嵌高度变量, 悬浮态用 CSS 默认高度。
@@ -4226,6 +4239,30 @@
             panel.style.removeProperty('--dlr-dock-min');
             try { restorePos(); } catch (e) { }   // 回到悬浮: 拖过的坐标 / 没拖过就是右下角
             try { syncRing(); } catch (e) { }
+        }
+        // 内嵌态: 面板作为末尾子节点进列, 列可能被撑得比视口高, 列自己的原生滚动条
+        // (白底+箭头) 贴着深色面板冒出来。向上找第一个真正在滚的祖先 (overflow-y 为
+        // auto/scroll 且确实溢出) 打标记, 只交 CSS 藏外观, 滚动能力原样保留;
+        // 1.5s 守护与 dockPanel 会重复调用 (幂等), undock 摘除。
+        function markScrollHost() {
+            if (!docked()) return;
+            try {
+                let n = panel.parentElement;
+                while (n && n !== document.documentElement) {
+                    const cs = getComputedStyle(n);
+                    const oy = cs.overflowY;
+                    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 2) {
+                        if (!n.hasAttribute('data-dlr-nosb')) n.setAttribute('data-dlr-nosb', '1');
+                        return;
+                    }
+                    n = n.parentElement;
+                }
+            } catch (e) { }
+        }
+        function unmarkScrollHost() {
+            try {
+                document.querySelectorAll('[data-dlr-nosb]').forEach(function (m) { m.removeAttribute('data-dlr-nosb'); });
+            } catch (e) { }
         }
         // ---------- 内嵌态高度可拉伸 (v3.4.0) ----------
         // 纯几何: 下限按实测「文字不被裁」算, 上限按页签条以下的实际空间算。
@@ -4342,6 +4379,7 @@
                         if (!panel.isConnected || !dockHost || !dockHost.contains(panel)) {
                             if (!dockPanel()) { undockPanel(); appendLog('侧栏已消失, 面板回到悬浮位置'); }
                         }
+                        try { markScrollHost(); } catch (e) { }
                     } else if (dockChk.checked) {
                         dockPanel();   // 开关开着但还没嵌上(侧栏刚上线) → 补挂
                     }
