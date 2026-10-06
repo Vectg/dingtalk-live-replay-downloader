@@ -63,7 +63,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 **发送到下载器（实验性）**
 
-- **发送到 aria2（v3.3.0, 实验性）**：面板底部「⬇ 发送到 aria2」把当前分辨率的**每个切片 URL 逐条**交给本机 aria2（`aria2.addUri`，用 `system.multicall` 每批 40 条一次 POST）。更多设置里新增 aria2 区块：主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」，设置持久化（密钥只写本地存储）。**aria2 不支持 m3u8**，所以是逐条推送而不是丢一个播放列表地址；产物是 `seg00000.ts …` 这样的切片文件，日志会给出 `ffmpeg -f concat` 合成命令。
+- **aria2 配置（v3.3.0, 实验性; v3.5.1 起移除独立推送按钮）**：更多设置里的 aria2 区块：主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」，设置持久化（密钥只写本地存储）。切片通过**下载交给 aria2 总开关**（见下条）交给本机 aria2, 逐条 `aria2.addUri`, 用 `system.multicall` 每批 40 条一次 POST. **aria2 不支持 m3u8**, 所以是逐条推送而不是丢一个播放列表地址; 产物是 `seg00000.ts …` 这样的切片文件, 日志会给出 `ffmpeg -f concat` 合成命令.
 - **下载交给 aria2（v3.4.0, 实验性, 默认关）**：更多设置里的**总开关**。打开后**所有下载任务**都改由本机 aria2 执行 —— 点「下载本页回放」以及队列里的每一个回放，面板只负责解析出切片清单并逐条 `addUri` 推送，浏览器内的切片下载 / 拼接 / 保存全部跳过；关闭时行为与之前完全一致。开关状态持久化。
 - **诚实拒绝而不是假装能推**：AES-128 加密切片（密钥只在浏览器里解密）与 fMP4（含独立初始化段）会直接拒绝并在状态栏说明原因。
 - **错误分类**：`Unauthorized` 提示核对 `--rpc-secret`；`Invalid Request` / `No such method` 提示 aria2 版本过旧；连不上则提示确认已启动与端口。测试连接用 `aria2.getVersion` 区分这几种情况。
@@ -246,7 +246,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 **Hand off to a downloader**
 
-- **Send to aria2 (v3.3.0, experimental)**: the 「⬇ 发送到 aria2」 button at the panel bottom hands **every segment URL of the current resolution** to a local aria2, one by one (`aria2.addUri`, batched 40 per POST via `system.multicall`). 更多设置 gains an aria2 block: host / port / secret / save directory plus 「🔌 测试连接」, all persisted (the secret only ever goes into local storage). **aria2 does not support m3u8**, so segments are pushed individually rather than handing over a playlist URL; the artefacts are `seg00000.ts …` files and the log prints the matching `ffmpeg -f concat` command.
+- **aria2 settings (v3.3.0, experimental; standalone push button removed in v3.5.1)**: the aria2 block in 更多设置 has host / port / secret / save directory plus 「🔌 测试连接」, all persisted (the secret only ever goes into local storage). Segments reach the local aria2 through the **hand-every-download-to-aria2 master switch** (next bullet), one `aria2.addUri` per URL, batched 40 per POST via `system.multicall`. **aria2 does not support m3u8**, so segments are pushed individually rather than handing over a playlist URL; the artefacts are `seg00000.ts …` files and the log prints the matching `ffmpeg -f concat` command.
 - **Hand every download to aria2 (v3.4.0, experimental, off by default)**: a master switch in 更多设置. When on, **all** download tasks are executed by the local aria2 — pressing 「下载本页回放」 and every item in the queue alike; the panel only parses the segment list and pushes each URL with `addUri`, and the in-page segment fetch / concat / save are all skipped. With it off, behaviour is exactly as before. The switch persists.
 - **Refuses honestly instead of pretending**: AES-128 encrypted segments (the key only exists in the browser) and fMP4 (separate init segment) are rejected with the reason stated in the status line.
 - **Error classes**: `Unauthorized` → check `--rpc-secret`; `Invalid Request` / `No such method` → aria2 too old; unreachable → confirm it is running and the port is right. 「测试连接」 uses `aria2.getVersion` to tell these apart.

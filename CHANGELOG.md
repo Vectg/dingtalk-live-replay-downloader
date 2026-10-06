@@ -3,6 +3,10 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.5.1] - 2026-10-06
+### 移除
+- 「⬇ 发送到 aria2」按钮及其整条点击逻辑: 更多设置的「下载交给 aria2」总开关打开后, 点「下载本页回放」与队列任务已全部交由本机 aria2 执行, 独立按钮成为冗余入口. aria2 区块 (主机 / 端口 / 密钥 / 保存目录 / 测试连接) 不受影响.
+
 ## [3.5.0] - 2026-10-06
 ### 新增
 - **聊天记录导出（实验性）**：面板底部「💬 导出聊天记录」一键拉取回放聊天的全部评论历史（最多 20 页游标）。支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）。接口逻辑实测：GET + `loadMoreId` 分页获取, `sortType` 必填; POST 返回 405, 缺参数 400; 网页登录态身份返回 errorCode 19004, 实测无法拿到内容, 面板如实报错不伪造.
@@ -799,7 +803,8 @@
 1.6.8 的修复跨了两次提交（`a517679` 首次修改, `add0163` 补上漏掉的版本号 bump）,
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
 [3.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.4.0...v3.5.0
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...HEAD
+[3.5.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...v3.5.1
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1

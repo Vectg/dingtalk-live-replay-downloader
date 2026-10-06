@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.5.0
+// @version      3.5.1
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1928,7 +1928,6 @@
         <div class="row">
             <button id="dlr-diag" title="把版本, 解析结果, 失败片号, 未捕获异常等导出为 .txt, 便于排查问题">📋 导出诊断日志</button>
             <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8, 可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
-            <button id="dlr-aria2-send" title="实验性. 把当前分辨率的每个切片 URL 逐条交给本机 aria2 下载 (aria2.addUri), 文件落到 aria2 的保存目录; 合成一个文件请用 ffmpeg -f concat. 需要本机已开启 aria2 RPC (默认 127.0.0.1:6801, 强烈建议配 --rpc-secret)">⬇ 发送到 aria2</button>
             <button id="dlr-chat" title="导出本场回放的聊天记录 (实验性). 需要登录态; 可选 .txt / .json / .csv / .html 四种格式">💬 导出聊天记录</button>
             <select id="dlr-chat-fmt" title="聊天记录导出格式"><option value="txt" selected>.txt</option><option value="json">.json</option><option value="csv">.csv</option><option value="html">.html</option></select>
         </div>
@@ -4018,7 +4017,7 @@
         // 设置项持久化; 密钥只写 GM 存储, 不外发、不进诊断日志。
         const arHost = $('dlr-aria2-host'), arPort = $('dlr-aria2-port'),
             arSecret = $('dlr-aria2-secret'), arDir = $('dlr-aria2-dir'),
-            arState = $('dlr-aria2-state'), arTest = $('dlr-aria2-test'), arSend = $('dlr-aria2-send');
+            arState = $('dlr-aria2-state'), arTest = $('dlr-aria2-test');
         const arSetState = (txt, cls) => {
             if (!arState) return;
             arState.textContent = txt || '';
@@ -4092,75 +4091,6 @@
                 arTest.disabled = false;
             }
         });
-        // 发送到 aria2: 必须先有解析结果, 否则无从推送。
-        arSend && arSend.addEventListener('click', async () => {
-            if (!prepCache || !prepCache.parsed || !(prepCache.parsed.segments || []).length) {
-                setStatus('⚠ 尚未解析到切片列表, 请先点"下载本页回放"或等预取完成', true);
-                return;
-            }
-            const segs = prepCache.parsed.segments;
-            // 这两条路径 aria2 拿不到: 加密切片要 AES-128 参数, fMP4 的 init 段是独立地址。
-            // 与其推一批下不下来的任务, 不如直接说清楚。
-            if (prepCache.parsed.encrypted) {
-                setStatus('⚠ AES-128 加密切片无法交给 aria2 (密钥只在浏览器里解密)', true);
-                appendLog('⚠ 该回放为 AES-128 加密, 已拒绝推送到 aria2');
-                return;
-            }
-            if (prepCache.parsed.fmp4) {
-                setStatus('⚠ fMP4 回放(含初始化段)暂不支持推送到 aria2', true);
-                appendLog('⚠ 该回放为 fMP4 (#EXT-X-MAP), 已拒绝推送到 aria2');
-                return;
-            }
-            const cfg = arConfig();
-            arSave();
-            const ua = navigator.userAgent || '';
-            const plan = aria2Plan(segs, cfg.dir, REFERER, ua);
-            if (!plan.items.length) {
-                setStatus('⚠ 切片列表为空, 无法推送', true);
-                return;
-            }
-            const oldText = arSend.textContent;
-            arSend.disabled = true;
-            arSend.textContent = '⏳ 推送中...';
-            arSetState('正在推送 ' + plan.items.length + ' 个切片 ...');
-            try {
-                let gids = 0, failed = 0, firstErr = '';
-                for (let b = 0; b < plan.batches.length; b++) {
-                    const payload = aria2BuildBatch(String(b + 1), plan.batches[b], cfg.secret);
-                    const body = await aria2Rpc(cfg, payload, 30000);
-                    const res = (body.result || []);
-                    for (let k = 0; k < res.length; k++) {
-                        if (res[k] && res[k].error) {
-                            failed++;
-                            if (!firstErr) firstErr = aria2Explain(res[k].error.message || ('code ' + res[k].error.code));
-                        } else gids++;
-                    }
-                }
-                const title = (prepCache.model && prepCache.model.title) || 'replay';
-                const outName = sanitize(title) || 'replay';
-                if (failed && !gids) {
-                    setStatus('❌ 推送失败: ' + firstErr, true);
-                    appendLog('❌ aria2 推送失败 (' + failed + ' 条): ' + firstErr);
-                } else {
-                    const dirNote = cfg.dir ? (' → ' + cfg.dir) : ' (aria2 默认目录)';
-                    setStatus('✅ 已推送 ' + gids + ' 个切片给 aria2' + dirNote +
-                        (failed ? (' · ' + failed + ' 条失败') : ''), failed > 0);
-                    appendLog('⬇ 已推送到 aria2: ' + gids + '/' + plan.items.length + ' 个切片' + dirNote +
-                        ' (' + (plan.batches.length) + ' 批)' +
-                        (failed ? (' · 失败 ' + failed + ': ' + firstErr) : ''));
-                    appendLog('   文件名形如 ' + aria2SegName(segs[0], 0) + ' ... ' +
-                        aria2SegName(segs[segs.length - 1], segs.length - 1) +
-                        '; 合成单个文件: ffmpeg -f concat -safe 0 -i list.txt -c copy ' + outName + '.mp4');
-                }
-            } catch (e) {
-                setStatus('❌ 推送失败: ' + e.message, true);
-                appendLog('❌ aria2 推送失败: ' + e.message);
-            } finally {
-                arSend.disabled = false;
-                arSend.textContent = oldText;
-            }
-        });
-
 
         // ---------- 聊天记录导出 (v3.5.0, 实验性) ----------
         const chatBtn = $('dlr-chat'), chatFmt = $('dlr-chat-fmt');
@@ -4726,3 +4656,4 @@
         init();
     }
 })();
+
