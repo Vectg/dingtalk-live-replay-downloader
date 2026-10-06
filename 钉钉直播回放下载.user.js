@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.5.2
+// @version      3.5.3
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -4264,15 +4264,17 @@
             const savedH = parseInt(GM_getValue('dlr_dock_h'), 10);
             if (isFinite(savedH) && savedH >= DOCK_MIN_H) applyDockHeight(savedH);
         } catch (e) { }
-        // 拖动把手改高度 (v3.5.2 起把手位于面板顶边; 底边跟随指针, 下拖 = 变高); pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
+        // 拖动把手改高度: 面板底边锚定在列底, 顶边把手直接跟随指针 —— 下拉 = 变矮, 上推 = 变高。
+        // pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
         // 指针拖出把手范围也不丢事件。
         const rz = $('dlr-dock-resize');
         if (rz) {
             let rStart = 0, hStart = 0, rActive = false;
+            const rzBody = panel.querySelector('.body') || panel;
             rz.addEventListener('pointerdown', (e) => {
                 if (!docked() || panel.classList.contains('mini')) return;
                 rStart = e.clientY;
-                hStart = panel.getBoundingClientRect().height;
+                hStart = rzBody.getBoundingClientRect().height;   // v3.5.3: .body 实高, 面板外框含内边距会虚高 δpx
                 rActive = true;
                 try { rz.setPointerCapture(e.pointerId); } catch (err) { }
                 e.preventDefault(); e.stopPropagation();
@@ -4280,18 +4282,18 @@
             rz.addEventListener('pointermove', (e) => {
                 if (!rActive) return;
                 e.preventDefault();
-                applyDockHeight(hStart + (e.clientY - rStart));   // 往下拖 = 变高
+                applyDockHeight(hStart - (e.clientY - rStart));   // 下拉: 顶边跟随指针下移 (变矮); 上推变高
             });
             const rzEnd = (e) => {
                 if (!rActive) return;
                 rActive = false;
                 try { rz.releasePointerCapture(e.pointerId); } catch (err) { }
-                try { GM_setValue('dlr_dock_h', applyDockHeight(panel.getBoundingClientRect().height)); } catch (err) { }
+                try { GM_setValue('dlr_dock_h', applyDockHeight(rzBody.getBoundingClientRect().height)); } catch (err) { }
                 try { syncRing(); } catch (err) { }
             };
             rz.addEventListener('pointerup', rzEnd);
             rz.addEventListener('pointercancel', rzEnd);
-            window.addEventListener('resize', () => { if (docked()) applyDockHeight(panel.getBoundingClientRect().height); });
+            window.addEventListener('resize', () => { try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (err) { } });
         }
 
         const dockChk = $('dlr-dock');

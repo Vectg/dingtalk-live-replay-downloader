@@ -3,6 +3,12 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.5.3] - 2026-10-06
+### 修复
+- v3.5.2 把手移到顶边后拖动方向反了: 面板底边锚定在列底, 而旧公式是按底边把手写的 (下拉 = 变高), 顶边把手因此在下拉时往上跑. 现在**顶边把手直接跟随指针**: 下拉 = 变矮, 上推 = 变高. 同时根治同源的参照错位: 拖动起点 / 落点回写 / 窗口缩放重夹原先都拿面板外框高度 (含内边距) 当内容高度, 起手与松手瞬间会虚跳一个内边距的 δ, 现统一取 .body 实高或走 __dockSyncHeight 单一入口.
+### 备注
+- 之前报告的多余滚动条确认已随 v3.5.2 一并消失 (把手从 bottom:-5px 收回面板内, 不再伸出 .body 边界 5px 撑出滚动条), 本版无需额外改动.
+
 ## [3.5.2] - 2026-10-06
 ### 变更
 - 内嵌态的拖动调高把手从面板**底边**移到**顶边** (不必再探到面板底部); 拖动语义不变 —— 往下拖变高, 高度范围 / 持久化逻辑不变. 悬浮态下把手本就只对内嵌态生效, 现在直接隐藏, 顺带让出悬浮标题栏顶部的拖动区域.
@@ -809,7 +815,8 @@ tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界
 [3.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.4.0...v3.5.0
 [3.5.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...v3.5.1
 [3.5.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...v3.5.2
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...HEAD
+[3.5.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...v3.5.3
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1
