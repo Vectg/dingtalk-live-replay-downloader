@@ -18,7 +18,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 **实验性（未正式发布）**
 
-- **聊天记录导出**：面板底部「📎 导出聊天记录」一键拉取回放聊天的全部评论历史（最多 20 页游标）。支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）。详情参见 Chat 文档。扫码获取：`https://lv.dingtalk.com/live/listComment` 带 `loadMoreId` 分页获取。
+- **聊天记录导出**：面板底部「💬 导出聊天记录」一键拉取回放聊天的全部评论历史（最多 20 页游标）。支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）。接口为 `https://lv.dingtalk.com/live/listComment`, GET 带 `loadMoreId` 游标分页, `sortType` 必填.
 
 **核心**
 
@@ -194,7 +194,11 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.4.0)
+## Features (v3.5.0)
+
+**Experimental (not yet proven)**
+
+- **Chat export**: the "💬 Export chat record" button at the bottom of the panel pulls the full comment history of the replay's chat (up to 20 cursor pages). Formats: `.txt` (one `[time] user: message` per line), `.json` (with export timestamp and metadata), `.csv` (BOM-guarded against mojibake), `.html` (opens or prints directly in a browser). The endpoint is `https://lv.dingtalk.com/live/listComment`, paged with a `loadMoreId` cursor, `sortType` required.
 
 **Core**
 
