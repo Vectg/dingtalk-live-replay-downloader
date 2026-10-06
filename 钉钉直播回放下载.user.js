@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.1
+// @version      3.6.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1121,6 +1121,33 @@
         };
     }
 
+    // ---------- 悬浮态不再限高（v3.6.2） ----------
+    // .body 的 max-height 原本是 docked/悬浮共用的写死值 calc(100vh - 140px)：
+    // 悬浮展开时内容一超出就冒滚动条，面板被拖到靠下时最明显，可滚区只剩百来像素。
+    // 这里按面板在视口里的实际位置算出「还能往下长多少」，用 CSS 变量
+    // --dlr-float-max-h 覆盖那个写死值；内嵌态摘掉变量、交还 CSS 默认，不碰 dock 高度。
+    // panel 与 innerH 走参数而不是闭包变量：抽取器按函数名切源码，单测要能独立调用。
+    function syncFloatMaxH(panel, innerH) {
+        // 内嵌态不参与：dock 的高度由 --dlr-dock-h 系列管，变量必须摘掉，
+        // 否则悬浮时算出的上限会跟着一起内嵌进去（v3.6.1 刚修好的内嵌高度又会跑偏）。
+        if (panel.classList.contains('docked')) {
+            panel.style.removeProperty('--dlr-float-max-h');
+            return;
+        }
+        const r = panel.getBoundingClientRect();
+        if (!r.height) return;            // 还没入 DOM，量到的全是 0
+        const body = panel.querySelector('.body');
+            // .body 之外那部分固定占用（展开条/头部/底栏/内边距）。它和 .body 的高度无关，
+            // 所以展开动画途中算出来的值也是准的 —— .body 变高不会反过来改变 chrome。
+            // 查不到 .body（模板被改坏）时记 0，别把整个面板高度都当成固定占用。
+            const chrome = body ? Math.max(0, r.height - body.getBoundingClientRect().height) : 0;
+            // 面板是 fixed 且锚在视口内，r.top 就是它到视口顶的距离；
+            // .body 往下最多长到视口底留 16px（与 CSS 默认页边距一致）。
+            // top 夹到 0：面板被拖出视口上沿时不算出比视口还高的上限。
+            const cap = Math.max(120, (innerH || window.innerHeight) - Math.max(0, r.top) - chrome - 16);
+        panel.style.setProperty('--dlr-float-max-h', Math.round(cap) + 'px');
+    }
+
     // ---------- 截取时间输入的单位上限（v2.3.0） ----------
     // 用户不该先猜「这场回放有多长」再决定填 mm:ss 还是 hh:mm:ss。
     // 这里按已解析出的回放总时长推出「上限形态」：
@@ -1740,7 +1767,7 @@
            全部展开时面板可能比窗口还高（笔记本视口常只有 700~900px）。
            用 max-height 限制 .body 高度并让它内部滚动，面板永远不会超出视口；
            收起态不受影响（高度由内容决定，max-height 只是上限）。 */
-        #dlr-panel .body{max-height:calc(100vh - 140px);overflow-y:auto;overflow-x:hidden;
+        #dlr-panel .body{max-height:var(--dlr-float-max-h,calc(100vh - 140px));overflow-y:auto;overflow-x:hidden;
             scrollbar-width:thin}
         #dlr-panel .body::-webkit-scrollbar{width:6px}
         #dlr-panel .body::-webkit-scrollbar-thumb{background:#3a3f4b;border-radius:3px}
@@ -3272,6 +3299,7 @@
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
         document.body.appendChild(panel);
+        try { syncFloatMaxH(panel); } catch (e) { }   // 入 DOM 后才量得到真实 rect
         // 下载光环是独立 SVG 层，挂在 body 下而非面板内部，
         // 避免面板的堆叠上下文/半透明背景影响光环渲染
         const NS = 'http://www.w3.org/2000/svg';
@@ -3855,6 +3883,8 @@
                 ex.style.opacity = '0';
                 ex.style.height = '0px';
             }
+            // 展开/收起改的是面板整体高度，上限跟着重算。
+            try { syncFloatMaxH(panel); } catch (e) { }
         }
     };
         // 归一化：'1'/1/true/'true' = 收缩，'0'/0/false/'false' = 展开，缺省 = 展开。
@@ -4191,6 +4221,7 @@
             // 漏掉这一步的表现：拖动面板时光环停在原地不动，面板滑走了，
             // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）。
             try { syncRing(); } catch (e) { }
+            try { syncFloatMaxH(panel); } catch (e) { }   // 位置变了，可用高度也变了
         };
         // 窗口缩放后重新钳制面板位置。
         // 缺陷表现：把面板拖到最右再缩小窗口，面板会有一大半跑到屏幕外
@@ -4201,6 +4232,7 @@
         window.addEventListener('resize', () => {
             try {
                 if (lastPos) applyPos(lastPos.x, lastPos.y);
+                syncFloatMaxH(panel);
             } catch (e) { }
         });
         const restorePos = () => {
@@ -4226,6 +4258,7 @@
             try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
             try { syncRing(); } catch (e) { }
             try { markScrollHost(); } catch (e) { }
+            try { syncFloatMaxH(panel); } catch (e) { }   // 内嵌态 → 摘掉悬浮上限变量
             return true;
         }
         function undockPanel() {
@@ -4239,6 +4272,7 @@
             panel.style.removeProperty('--dlr-dock-min');
             try { restorePos(); } catch (e) { }   // 回到悬浮: 拖过的坐标 / 没拖过就是右下角
             try { syncRing(); } catch (e) { }
+            try { syncFloatMaxH(panel); } catch (e) { }   // 回悬浮 → 重新按视口算上限
         }
         // 内嵌态: 面板作为末尾子节点进列, 列可能被撑得比视口高, 列自己的原生滚动条
         // (白底+箭头) 贴着深色面板冒出来。向上找第一个真正在滚的祖先 (overflow-y 为

@@ -1362,6 +1362,77 @@ section('智能调度');
         eq(chatFormat('bogus', S, {}).ext, 'txt', '未知格式回退 txt');
         eq(chatFormat(undefined, [], {}).ext, 'txt', 'undefined 格式回退 txt');
     }
+
+    section('悬浮态高度上限（v3.6.2）');
+    {
+        const { syncFloatMaxH } = loadFns(['syncFloatMaxH']);
+
+        // 面板 stub：只需要 classList / style / getBoundingClientRect / querySelector
+        const mkPanel = (o) => {
+            const vars = {};
+            return {
+                style: {
+                    setProperty: (k, v) => { vars[k] = v; },
+                    removeProperty: (k) => { delete vars[k]; },
+                    _vars: vars,
+                },
+                classList: {
+                    _c: new Set(o.classes || []),
+                    contains(c) { return this._c.has(c); },
+                },
+                _rect: o.rect,
+                getBoundingClientRect() { return this._rect; },
+                querySelector(sel) { return sel === '.body' ? (o.body || null) : null; },
+            };
+        };
+        const mkBody = (h) => ({ getBoundingClientRect: () => ({ height: h }) });
+
+        // 悬浮态：上限 = 视口高 - 面板顶边距 - body 之外固定占用 - 底边距
+        // 面板 300px 高、.body 200px → chrome 100px；视口 800、面板顶 40 → 800-40-100-16=644
+        const p1 = mkPanel({ rect: { top: 40, height: 300 }, body: mkBody(200) });
+        syncFloatMaxH(p1, 800);
+        eq(p1.style._vars['--dlr-float-max-h'], '644px', '悬浮态上限按视口实算');
+
+        // chrome 为 0（.body 就是全部内容）时上限更大：800-40-0-16=744
+        const p2 = mkPanel({ rect: { top: 40, height: 200 }, body: mkBody(200) });
+        syncFloatMaxH(p2, 800);
+        eq(p2.style._vars['--dlr-float-max-h'], '744px', 'body 之外无占用 → 上限更大');
+
+        // 面板拖到靠下（顶边距大）→ 可用高度被压小，这是滚动条的真凶
+        const p3 = mkPanel({ rect: { top: 600, height: 160 }, body: mkBody(60) });
+        syncFloatMaxH(p3, 800);
+        eq(p3.style._vars['--dlr-float-max-h'], '120px', '拖到靠下 → 算出的 84px 被 120 兜底挡住');
+
+        // 内嵌态：摘掉变量交还 CSS 默认（dock 高度由 --dlr-dock-h 管）
+        const p4 = mkPanel({ rect: { top: 0, height: 900 }, body: mkBody(300), classes: ['docked'] });
+        p4.style.setProperty('--dlr-float-max-h', '999px');
+        syncFloatMaxH(p4, 800);
+        eq('--dlr-float-max-h' in p4.style._vars, false, '内嵌态摘掉悬浮上限变量');
+
+        // 面板被拖出视口外（顶边距为负）→ 负数被 120px 兜底挡住，不写负高度
+        const p5 = mkPanel({ rect: { top: -50, height: 300 }, body: mkBody(200) });
+        syncFloatMaxH(p5, 800);
+        eq(p5.style._vars['--dlr-float-max-h'], '684px', '顶边距为负 → 按 0 算，不算出比视口还高的上限');
+
+        // 还没入 DOM：rect 全 0，直接跳过、不写变量（否则会写 120px 把面板锁死）
+        const p6 = mkPanel({ rect: { top: 0, height: 0 }, body: mkBody(0) });
+        syncFloatMaxH(p6, 800);
+        eq('--dlr-float-max-h' in p6.style._vars, false, '未入 DOM → 不写变量');
+
+        // 查不到 .body（模板被改坏）→ chrome 退化成 0，不抛异常
+        const p7 = mkPanel({ rect: { top: 40, height: 300 } });
+        syncFloatMaxH(p7, 800);
+        eq(p7.style._vars['--dlr-float-max-h'], '744px', '查不到 .body → chrome 记 0');
+
+        // 不传 innerH 时回退 window.innerHeight（生产挂点就是这条路径）
+        const p8 = mkPanel({ rect: { top: 40, height: 300 }, body: mkBody(200) });
+        const realIH = global.window ? global.window.innerHeight : 768;
+        if (!global.window) global.window = { innerHeight: 800 };
+        global.window.innerHeight = 800;
+        syncFloatMaxH(p8);
+        eq(p8.style._vars['--dlr-float-max-h'], '644px', '不传 innerH → 用 window.innerHeight');
+        global.window.innerHeight = realIH;
+    }
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
