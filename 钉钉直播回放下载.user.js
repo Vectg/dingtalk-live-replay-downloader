@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.5.3
+// @version      3.6.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1928,10 +1928,8 @@
             <span id="dlr-retry-info" class="tip" style="flex:1"></span>
         </div>
         <div class="row">
-            <button id="dlr-diag" title="把版本, 解析结果, 失败片号, 未捕获异常等导出为 .txt, 便于排查问题">📋 导出诊断日志</button>
-            <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8, 可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
-            <button id="dlr-chat" title="导出本场回放的聊天记录 (实验性). 需要登录态; 可选 .txt / .json / .csv / .html 四种格式">💬 导出聊天记录</button>
-            <select id="dlr-chat-fmt" title="聊天记录导出格式"><option value="txt" selected>.txt</option><option value="json">.json</option><option value="csv">.csv</option><option value="html">.html</option></select>
+            <select id="dlr-export" title="选择要导出的内容"><option value="diag" selected>📋 诊断日志 (.txt)</option><option value="m3u8">📄 m3u8 播放列表 (.m3u8)</option><optgroup label="聊天记录 (实验性)"><option value="chat-txt">💬 聊天 .txt</option><option value="chat-json">💬 聊天 .json</option><option value="chat-csv">💬 聊天 .csv</option><option value="chat-html">💬 聊天 .html</option></optgroup></select>
+            <button id="dlr-export-go" title="导出下拉里选中的内容; 聊天记录需要登录态, 实验性">⬇ 导出</button>
         </div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
@@ -3963,11 +3961,10 @@
 
         // 导出诊断日志：把收集到的现场写成 .txt 存进浏览器下载目录。
         // 用户把它发给我们就能复现问题，比截图和口头描述有效得多。
-        const diagBtn = $('dlr-diag');
-        diagBtn && diagBtn.addEventListener('click', async () => {
-            const oldText = diagBtn.textContent;
-            diagBtn.disabled = true;
-            diagBtn.textContent = '⏳ 生成中...';
+        const runDiagExport = async (btn) => {
+            const oldText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 生成中...';
             try {
                 const text = buildDiagReport();
                 const filename = '钉钉回放下载-诊断-' + stamp() + '.txt';
@@ -3979,22 +3976,21 @@
             } catch (e) {
                 setStatus('❌ 导出诊断日志失败:' + e.message, true);
             } finally {
-                diagBtn.disabled = false;
-                diagBtn.textContent = oldText;
+                btn.disabled = false;
+                btn.textContent = oldText;
             }
-        });
+        };
 
         // 导出 m3u8：把当前这一路的切片列表存成标准播放列表。
         // 必须等解析成功才有内容可导，所以没解析时给出明确提示而不是导出空文件。
-        const m3u8Btn = $('dlr-m3u8');
-        m3u8Btn && m3u8Btn.addEventListener('click', async () => {
+        const runM3u8Export = async (btn) => {
             if (!prepCache || !prepCache.parsed || !(prepCache.parsed.segments || []).length) {
                 setStatus('⚠ 尚未解析到切片列表, 请先点"下载本页回放"或等预取完成', true);
                 return;
             }
-            const oldText = m3u8Btn.textContent;
-            m3u8Btn.disabled = true;
-            m3u8Btn.textContent = '⏳ 生成中...';
+            const oldText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 生成中...';
             try {
                 const title = (prepCache.model && prepCache.model.title) || 'replay';
                 const text = buildM3u8(prepCache.parsed, title);
@@ -4010,10 +4006,10 @@
             } catch (e) {
                 setStatus('❌ 导出 m3u8 失败:' + e.message, true);
             } finally {
-                m3u8Btn.disabled = false;
-                m3u8Btn.textContent = oldText;
+                btn.disabled = false;
+                btn.textContent = oldText;
             }
-        });
+        };
 
         // ---------- aria2 推送 (v3.3.0, 实验性) ----------
         // 设置项持久化; 密钥只写 GM 存储, 不外发、不进诊断日志。
@@ -4095,18 +4091,16 @@
         });
 
         // ---------- 聊天记录导出 (v3.5.0, 实验性) ----------
-        const chatBtn = $('dlr-chat'), chatFmt = $('dlr-chat-fmt');
-        chatBtn && chatBtn.addEventListener('click', async () => {
+        const runChatExport = async (btn, fmtName) => {
             let p = null;
             try { p = parseUrl(($('dlr-url') && $('dlr-url').value) || location.href); }
             catch (e) {
                 setStatus('⚠ 请先填入或打开一个回放页面', true);
                 return;
             }
-            const fmtName = (chatFmt && chatFmt.value) || 'txt';
-            const oldText = chatBtn.textContent;
-            chatBtn.disabled = true;
-            chatBtn.textContent = '⏳ 拉取中...';
+            const oldText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 拉取中...';
             try {
                 const list = await fetchAllChat(p.roomId, p.liveUuid, 20);
                 if (!list.length) {
@@ -4125,10 +4119,20 @@
                 setStatus('❌ 聊天记录导出失败: ' + e.message, true);
                 appendLog('❌ 聊天记录导出失败: ' + e.message);
             } finally {
-                chatBtn.disabled = false;
-                chatBtn.textContent = oldText;
+                btn.disabled = false;
+                btn.textContent = oldText;
             }
+        };
+        // ---------- 统一导出 (v3.6.0): 一个下拉选内容, 一个按钮执行 ----------
+        const exSel = $('dlr-export'), exGo = $('dlr-export-go');
+        exGo && exGo.addEventListener('click', async () => {
+            const v = (exSel && exSel.value) || 'diag';
+            if (v === 'm3u8') return runM3u8Export(exGo);
+            if (v.indexOf('chat-') === 0) return runChatExport(exGo, v.slice(5));
+            return runDiagExport(exGo);
         });
+        try { const _sv = GM_getValue('dlr_export', ''); if (_sv && exSel) exSel.value = _sv; } catch (e) {}
+        exSel && exSel.addEventListener('change', () => { try { GM_setValue('dlr_export', exSel.value); } catch (e) {} });
 
         // ---------- 队列 UI ----------
         // 三个 q* 变量原先漏了 const（逗号续行时只有第一项带声明），

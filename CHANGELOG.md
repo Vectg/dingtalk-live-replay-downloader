@@ -3,6 +3,12 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.6.0] - 2026-10-06
+### 变更
+- **导出合并为一个**：面板底部的「📋 导出诊断日志」「📄 导出 m3u8」「💬 导出聊天记录」三个按钮连同聊天格式小下拉, 合并为**一个下拉 + 一个「⬇ 导出」按钮**。下拉按内容分组: 诊断日志 (.txt)、m3u8 播放列表 (.m3u8)、聊天记录 (.txt / .json / .csv / .html), 选好点导出即可; 当前选择写入本地存储, 下次打开保持.
+### 重构
+- 三个导出逻辑抽成 runDiagExport / runM3u8Export / runChatExport 三个命名函数, 由统一按钮按选择分派 (聊天格式从下拉值拆出, 不再依赖独立格式下拉); 进度提示 (⏳ 生成中 / ⏳ 拉取中)、禁用与失败恢复统一走这一个按钮, 导出内容与改动前一致.
+
 ## [3.5.3] - 2026-10-06
 ### 修复
 - v3.5.2 把手移到顶边后拖动方向反了: 面板底边锚定在列底, 而旧公式是按底边把手写的 (下拉 = 变高), 顶边把手因此在下拉时往上跑. 现在**顶边把手直接跟随指针**: 下拉 = 变矮, 上推 = 变高. 同时根治同源的参照错位: 拖动起点 / 落点回写 / 窗口缩放重夹原先都拿面板外框高度 (含内边距) 当内容高度, 起手与松手瞬间会虚跳一个内边距的 δ, 现统一取 .body 实高或走 __dockSyncHeight 单一入口.
@@ -815,8 +821,9 @@ tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界
 [3.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.4.0...v3.5.0
 [3.5.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...v3.5.1
 [3.5.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...v3.5.2
+[3.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...v3.6.0
 [3.5.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...v3.5.3
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.0...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1
