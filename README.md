@@ -2,13 +2,11 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-3.0.1-informational)](CHANGELOG.md)
-
-A Tampermonkey userscript that downloads publicly accessible DingTalk live replays **without logging in** — it fetches the replay m3u8 playlist through public APIs, downloads every segment in the browser and assembles one file.
+[![Changelog](https://img.shields.io/badge/CHANGELOG-3.6.3-informational)](CHANGELOG.md)
 
 通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件. **无需登录钉钉账号**即可下载公开可访问的回放，在回放页点一下即可.
 
-> Only download content **you have the right to keep**. 仅用于下载你有权留存的内容.
+> 仅用于下载你有权留存的内容.
 
 **中文（默认）** ｜ [English](#english-version)
 
@@ -16,82 +14,73 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ## 功能（v3.6.3）
 
-**实验性（未正式发布）**
-
-- **统一导出（v3.6.0）**：诊断日志 / m3u8 / 聊天记录合并为面板底部**一个下拉 + 一个「⬇ 导出」按钮**——下拉分组选择要导出的内容（诊断日志 `.txt`、m3u8 播放列表、聊天记录 `.txt`/`.json`/`.csv`/`.html`），点按钮执行；选择会记入本地存储，下次打开保持.
-- **聊天记录导出**：导出下拉选中「💬 聊天」任一格式、点「⬇ 导出」，一键拉取回放聊天的全部评论历史（最多 20 页游标）. 支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）. 接口为 `https://lv.dingtalk.com/live/listComment`, GET 带 `loadMoreId` 游标分页, `sortType` 必填.
+> 每个功能的修复史与实测数据都在 [CHANGELOG.md](CHANGELOG.md)，这里只讲当前行为.
 
 **核心**
 
 - **无需登录**：`csrf` → `getOpenLiveInfoV2` 取带签名的播放地址，全程匿名.
 - **输出 MP4（默认）/ TS**：`.mp4` 由 `mux.js` 在浏览器内转封装；`.ts` 为原始拼接，兼容性最好.
-- **分辨率选择**：多档播放列表自动识别（默认「自动」= 最高带宽 = 原始分辨率），预取后回填各档位（含码率），切换即重新预取；选择持久化. **单档 TS 自动分析原始分辨率**——Range 拉首片前 64KB，TS 解包 → H.264 SPS 解析（支持 Baseline/Main/High、裁剪参数），下拉第一项直接显示 `自动（原始分辨率 1280×720）`，历史日志含 `H.264 Main @3.1` 等 profile/level 细节（真实回放实测）.
-- **MP4 时长与进度条已修复**：`mux.js` 输出的 `moov/mvhd/mdhd` duration 写成 `0xFFFFFFFF`（unknown 哨兵），播放器会显示成十几小时、拖不动进度条、画面卡死. 脚本遍历 `moof` 用 `tfdt + Σtrun` 算出真实时长写回，30 分钟回放即显示 30 分钟，文件大小不变.
-- **失败诊断**：切片失败时状态栏给出一行总结（序号 + 原因 + 排查建议），按错误类型区分（401/403 签名过期、404 回放已清理、其他降并发/更新脚本）.
-- **输出历史**：状态栏默认只显示最新一条；**点击状态栏**展开查看全部历史日志（最多 300 条、可滚动），再点收回. 完整句子自动换行，不裁字.
-- **进度动画**：进度条 + 状态栏完整显示（不裁字，可换行），实时显示当前阶段与 `n/N`.
-- **体积预估（v1.9.7）**：下载前用 `Range: bytes=0-0` 只拉首片 1 字节读 `Content-Range` 得单片总大小，`单片 × 片数` 得出总大小（不额外下载整片），解析阶段日志显示 `预计体积: 约 340 MB（单片 5.8 MB × 60 片）`；下载中进度条追加 `已下/预计` 字节数. 探测失败时静默跳过，不影响下载.
-- **完整性校验（v1.9.7）**：全部切片下载后逐片校验——数量齐全、非空、TS 同步字节 188 周期对齐（在首 188 字节内找对齐点，兼容带 ID3/填充前缀的合法切片；HTML 错误页与截断数据会被识破）. 通过则日志 `✅ 完整性校验通过：60/60 片 · 341.2 MB`；发现异常则**只把问题片置空、好片保留为断点缓存**，报出具体片号，点下载只补异常片，不用重下整个回放.
-- **帧级精确截取（v2.5.0 优化入口，实验性，默认关）**：更多设置里开启. 切片对齐只能精确到切片长度（通常 30 秒），开启后会在切片对齐的基础上再做一次精修：逐帧解析视频流找出全部关键帧，把起止点对齐到离目标最近的 IDR. **因为帧级精修需要完整切片集才能建立时间轴基准，启用时会先下载完整回放再裁剪**（多花一点流量和时间，但换来的精度是切片对齐做不到的）. 中途切出的流会重新封装 SPS/PPS 并插入输出开头，否则播放器找不到解码参数、开头若干帧会解码失败. fMP4 回放不支持（没有 TS 包结构）；解析不到足够关键帧时自动退回切片对齐结果，绝不会因为「想更精确」而让用户拿不到文件. **v2.5.0 起在截取区加了醒目指引**：不知道这个功能的人直接点提示行里的蓝色「点这里打开『帧级精确截取』」，会自动展开「更多设置」并让那个开关闪两下，不必自己去找. 开关标题写明「默认关」及开启代价.
-- **智能调度（v2.1.0）**：更多设置里开启（默认开）. 两件事一起做——**贪心取片顺序**：抽样探测头尾各若干片的真实体积（1 字节 Range，不下载整片），体积大的先下，让最长的那根线尽早启动，压缩整体完成时间；**并发自适应**：从你设定的线程数起步，连续成功就逐级加到 16，一旦有切片失败立刻降并发退避，恢复后再爬回去. 切片体积探不到（探测失败或 BYTERANGE 分片）时自动退回原序下载，不影响功能. 日志会报告抽样情况与最终并发. 关掉后并发固定为设定值，行为与 1.9.x 一致.
-- **解析后后台预下载（v2.7.0）**：打开回放页后，解析出切片列表的那一刻就在后台静默下载切片（弱并发 2，不抢带宽），日志提示 `✓ 后台预下载完成 12 片 · 441 KB，现在点下载只需合并保存`. 等你想好要下的时候，点下载几乎瞬间完成. 更多设置里可关（默认开），关掉后行为与 2.6.x 完全一致. **预下载只存内存不落盘**——刷新页面即丢弃，不会产生「删不掉」的幽灵缓存. 点「中断」或「删除已下载」会一并清掉.
-- **下载队列（v2.0.0）**：链接输入框下方可填多行队列（每行一个回放），点「▶ 开始队列」按顺序依次下载完. 行格式宽松——整段链接、裸查询串、`roomId liveUuid`、`roomId=liveUuid liveUuid=…`（从聊天记录复制时最常见的形式）都能识别；空行与 `#` 开头的注释行忽略，无法识别的行会单独报出并指出是第几行. **单个回放失败不会中断整队**——排了 5 个、第 3 个签名过期，4 和 5 照常跑完，最后汇总「成功 N · 失败 M」. 刻意做成顺序执行而非并发：并发多个回放只会让它们互相抢带宽、一起变慢，用户要的是「一次挂几个」而不是「一起抢」.
-- **导出 m3u8 播放列表（v1.9.12）**：导出下拉选「📄 m3u8 播放列表」、点「⬇ 导出」，把当前选中分辨率的切片列表存成标准播放列表，便于用 VLC / ffmpeg / 其他下载器重新拉取或存档. 严格按 HLS 规范输出——`TARGETDURATION` 向上取整到最长片、`EXTINF` 与切片 URL 严格交替、`EXT-X-MAP` 在首个 `EXTINF` 之前、`BYTERANGE` 在其切片 URL 之前、AES-128 时带 `KEY` 声明（含 IV）、结尾 `EXT-X-ENDLIST`. 刻意不加 BOM：部分解析器会把带 BOM 的首行当成标签名. 已用 ffmpeg 实测可正常识别（时长与切片数完全吻合）.
-- **一键导出诊断日志（v1.9.11）**：导出下拉选「📋 诊断日志」、点「⬇ 导出」，生成 `.txt`，包含脚本版本、浏览器 UA、硬件并发与自动识别的线程数、解析结果（切片数/时长/加密/fMP4/多码率档位）、缓存与待重试片号、各项设置、每次下载的成败结论，以及**页面未捕获的异常与 Promise 拒绝**. 播放地址里的签名（`auth_key`/`token`/`sign`/`signature`，含大小写变体）会被自动抹除——诊断文本常被直接贴到公开 issue 里，不抹除等于泄露一次性凭证.
-- **自定义分辨率（v1.9.11）**：分辨率下拉除播放列表声明的档位外，还列出**不超过原始分辨率**的常用档位（4K/1440p/1080p/900p/720p/540p/480p/360p/270p）；末尾的「自定义…」可手填 `宽x高`，支持 `1920X1080`、`1920×1080`、全角数字与中文冒号等常见手打写法. 填的值会匹配到播放列表里最接近的真实档位——**匹配不到正好这一档时会明确告知实际用了哪一档**，不会让用户以为下了自己没填的分辨率. 没有可用档位则如实说明并回到「自动」.
-- **自选更新源（v1.9.11）**：更多设置里可切换 **Gitee（默认）/ GitHub / 自动**. 默认 Gitee——`raw.githubusercontent.com` 在国内时通时不通，Gitee 镜像通常稳定. 切换后立即按新源重新检查一次，「发现新版」的跳转链接也跟着走对应源.
-- **只重试失败切片（v1.9.10）**：下载或完整性校验失败后，面板下方出现「♻ 只重试失败切片」按钮，旁边写明上次失败了几片、具体片号（例如「上次失败 2 片（#3 #6），其余切片已缓存」）. 点它**只补这几片**，已下好的片绝不再下一遍——重试用的是 1.9.6/1.9.7 建立的 IndexedDB 断点缓存，跨刷新、关页后依然有效. 换分辨率或点「删除已下载」会清掉该按钮，避免拿上一轮的数字误导.
-- **完成/失败通知（v1.9.9）**：下载结束（成功保存、或失败报错）时可选弹系统通知——标题点明成功/失败，正文带文件名与体积（失败时带具体原因与建议，点击通知可回到面板）. 提示音用 WebAudio 现场合成（完成两声上行、失败三声下行），不带外部音频文件. 两个开关都在「更多设置」里，且**默认都关闭**——浏览器自动播放策略常拦未交互页面的声音，声音默认开容易让人以为坏了；AudioContext 已在点「下载」时预热以缓解该策略. 需要时自行打开即可.
-- **链接解析修复（v1.9.8）**：粘贴不带域名的裸查询串（`?roomId=…&liveUuid=…`）时不再报「链接缺少 roomId/liveUuid」——旧代码在回退拼接时会把开头的 `?` 再拼一个，导致参数名带上多余问号而取不到.
+- **分辨率选择**：多档播放列表自动识别（默认「自动」= 最高带宽 = 原始分辨率），预取后回填各档位与码率，切换即重新预取. 单档 TS 会自动分析原始分辨率（Range 拉首片 64KB → 解析 H.264 SPS），下拉第一项直接显示 `自动（原始分辨率 1280×720）`.
+- **MP4 时长已修复**：`mux.js` 输出的 duration 是 `0xFFFFFFFF`（unknown 哨兵），播放器会显示成十几小时、拖不动进度条、画面卡死. 脚本遍历 `moof` 用 `tfdt + Σtrun` 算出真实时长写回，媒体数据与文件大小都不变.
+- **下载队列（v2.0.0）**：链接框下方可填多行队列（每行一个回放），按顺序依次下载完. 行格式宽松——整段链接、裸查询串、`roomId liveUuid`、从聊天记录复制的 `roomId=liveUuid liveUuid=…` 都能识别；空行与 `#` 注释忽略，无法识别的行会指出是第几行. **单个回放失败不会中断整队**，最后汇总「成功 N · 失败 M」. 刻意顺序执行而非并发：并发只会让它们互抢带宽、一起变慢.
+- **完整性校验（v1.9.7）**：全部切片下完逐片校验——数量齐全、非空、TS 同步字节 188 周期对齐（在首 188 字节内找对齐点，兼容带 ID3/填充前缀的合法切片；HTML 错误页与截断数据会被识破）. 通过则报 `✅ 完整性校验通过：60/60 片 · 341.2 MB`；发现异常**只把问题片置空、好片保留为断点缓存**，点下载只补异常片.
+- **只重试失败切片（v1.9.10）**：失败后出现「♻ 只重试失败切片」按钮，写明上次失败了几片、具体片号. 断点缓存存 IndexedDB（v1.9.6 起），跨刷新、关页后依然有效.
 
-**性能与预取**
+**下载**
 
-- **预取播放信息**（更多设置，默认开启）：打开回放页即在后台预取 csrf → 播放地址 → m3u8 切片索引，缓存 10 分钟. 点「下载本页回放」直接进入切片下载阶段，省掉每次 1~3 秒的解析等待. 文件名输入框的 placeholder 会直接回填为解析出的回放标题.
-- **并发线程自动识别**：默认按 CPU 逻辑核数 ×2 推算（4~16 封顶），网络 IO 密集场景下比固定 5 线程更快；「更多设置」里的说明文字会直接显示本次识别到的线程数. 手动改过之后以你的设置为准，选择持久化（`GM_setValue`），刷新后保留.
-
-**下载控制**
-
-- **暂停/继续**：下载中显示控制条，暂停后进度完全冻结，继续从原位推进.
-- **中断**：停止本次下载，已下载切片保留为断点缓存；再点下载自动**断点续传**（日志 `♻ 命中断点缓存`），不会重下. **缓存同时写入 IndexedDB（v1.9.6 起）——刷新页面、关闭标签页后重开，依然能续传**，日志显示 `♻ 命中跨会话断点缓存`；下载成功或点「删除已下载」时同步清空.
-- **删除已下载**：下载中一键放弃并清空全部切片缓存（含 IndexedDB），下次从头开始.
+- **暂停/继续**：下载中同一键随状态切换，暂停后进度完全冻结.
+- **中断**：已下载切片保留为断点缓存，再点下载自动续传（日志 `♻ 命中断点缓存`），不会重下.
+- **删除已下载**：清空全部切片缓存（含 IndexedDB），下次从头开始.
+- **体积预估（v1.9.7）**：下载前用 `Range: bytes=0-0` 只拉首片 1 字节读 `Content-Range`，`单片 × 片数` 得出总量，不额外下载整片. 探测失败静默跳过，不影响下载.
 - **实时速度与预计剩余时间**：进度条显示 `切片 6/12 · 1.2 MB/s · 剩 00:01`（EMA 平滑）.
+- **帧级精确截取（v2.5.0，默认关）**：切片对齐只能精确到切片长度（通常 30 秒），开启后逐帧找关键帧把起止点对齐到离目标最近的 IDR. **需要完整切片集才能建立时间轴，所以启用时会先下载完整回放再裁剪**. fMP4 不支持；关键帧不足时自动退回切片对齐，绝不会因为「想更精确」而让用户拿不到文件. 截取区有蓝色指引链接，点一下自动展开「更多设置」并让开关闪两下.
+- **智能调度（v2.1.0，默认开）**：抽样探测头尾各若干片的真实体积（1 字节 Range），体积大的先下，让最长的那根线尽早启动；并发从你设定的线程数起步，连续成功就逐级加到 16，一旦有切片失败立刻降并发退避，恢复后再爬回去. 体积探不到时自动退回原序.
+- **解析后后台预下载（v2.7.0，默认开）**：解析出切片列表的那一刻就在后台弱并发（2，不抢带宽）静默下载，等你点下载时几乎瞬间完成. **只存内存不落盘**，刷新即丢弃，不会产生「删不掉」的幽灵缓存.
+- **完成/失败通知（v1.9.9，默认关）**：结束时可选弹系统通知，标题点明成败、正文带文件名与体积. 提示音用 WebAudio 现场合成（完成两声上行、失败三声下行），不带外部音频文件. 默认关闭是因为浏览器自动播放策略常拦未交互页面的声音，声音默认开容易让人以为坏了.
 
 **下载后处理**
 
-- **自定义文件名**：面板可直接填写输出文件名，**留空则自动使用回放标题**（placeholder 即回放标题）；误带的 `.mp4`/`.ts` 后缀会自动去掉. 勾选「文件名加时间戳」后，placeholder 自动追加 `_时间戳` 且每秒刷新.
-- **截取时长（v2.3.0 起自动识别单位）**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）. **时间框不再预设格式**——解析出回放总时长后自动告诉你上限：总时长不足 1 小时给 `mm:ss`，达到 1 小时及以上自动换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`），框内灰字提示随总时长实时变化. **失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复. 两段写法（如 `1:30`）不做猜测性改写——它在 `mm:ss` 与 `hh:mm` 之间天然歧义，一律按 `mm:ss` 解析并在超限时给出可用写法. 结束超出总时长自动截到末尾并提示.
-- **文件名加时间戳**.
+- **自定义文件名**：留空则自动使用回放标题（placeholder 即标题），误带的 `.mp4`/`.ts` 后缀自动去掉. 勾选「文件名加时间戳」后 placeholder 追加 `_时间戳` 且每秒刷新.
+- **截取时长**：只下载「开始 → 结束」区间内的切片，留空即整段；按切片边界对齐（约 30 秒粒度）. **时间框不预设格式**——解析出总时长后自动告诉你上限：不足 1 小时给 `mm:ss`，达到 1 小时及以上换成 `hh:mm:ss`（小时位不限 99，可填 `100:00:00`）. **失焦自动补零**（`1:2:3` → `01:02:03`），全角数字/中文冒号/空白/零宽字符照旧自动修复. 两段写法（如 `1:30`）天然歧义，一律按 `mm:ss` 解析. 结束超出总时长自动截到末尾并提示.
+- **统一导出（v3.6.0）**：诊断日志 / m3u8 / 聊天记录合并为面板底部**一个下拉 + 一个「⬇ 导出」按钮**，选择会记入本地存储. 三种内容：
+  - **📋 诊断日志 `.txt`** —— 脚本版本、浏览器 UA、硬件并发与自动识别的线程数、解析结果（切片数/时长/加密/fMP4/多码率档位）、缓存与待重试片号、各项设置、每次下载的成败结论，以及**页面未捕获的异常与 Promise 拒绝**. 播放地址里的签名（`auth_key`/`token`/`sign`/`signature`，含大小写变体）会自动抹除——诊断文本常被直接贴到公开 issue 里，不抹除等于泄露一次性凭证.
+  - **📄 m3u8 播放列表** —— 把当前分辨率的切片列表存成标准播放列表，便于用 VLC / ffmpeg / 其他下载器重新拉取或存档. 严格按 HLS 规范输出：`TARGETDURATION` 向上取整到最长片、`EXTINF` 与切片 URL 严格交替、`EXT-X-MAP` 在首个 `EXTINF` 之前、`BYTERANGE` 在其切片 URL 之前、AES-128 时带 `KEY` 声明（含 IV）、结尾 `EXT-X-ENDLIST`. 刻意不加 BOM：部分解析器会把带 BOM 的首行当成标签名.
+  - **💬 聊天记录** —— 拉取回放聊天的全部评论历史（最多 20 页游标）. `.txt`（逐条 `[时间] 用户: 内容`）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）. 接口 `https://lv.dingtalk.com/live/listComment`，GET 带 `loadMoreId` 游标分页，`sortType` 必填.
+- **自定义分辨率（v1.9.11）**：下拉除播放列表声明的档位外，还列出**不超过原始分辨率**的常用档位（4K/1440p/1080p/900p/720p/540p/480p/360p/270p）；末尾「自定义…」可手填 `宽x高`，支持 `1920X1080`、`1920×1080`、全角数字与中文冒号等常见手打写法. 填的值会匹配到最接近的真实档位——**匹配不到正好这一档时明确告知实际用了哪一档**，不会让你以为下了自己没填的分辨率.
+
+**面板**
+
+- **面板内嵌侧栏（v3.2.0，默认关）**：更多设置里打开后，整个面板在**页面加载时**立刻内嵌到右侧「互动/简介」页签下方（不是等解析完才嵌，侧栏晚上线会自动重试）. 面板与页签、内容区同为流内兄弟：页签固定在上、永不被遮挡，内容区按 flex 自行让位且照常滚动. 内嵌态自动切紧凑排版（可见比例 25% → 54%），顶边抓手可上下拖动调高度（默认 430px）. 内嵌态禁用拖拽与窗口重定位，几何全交给 CSS. React 切页签把面板甩掉时 1.5s 内自动挂回；侧栏消失（窄窗口/退出登录）则自动回到悬浮、回来再挂上.
+- **内嵌滚动与底栏（v3.2.1）**：内嵌时内容超出可见高度**可直接滚轮下滑**；**版本号 / 检查更新那一栏永远钉在面板最底部**，不需要滚到底才看得见（收起时自动隐藏，不留空条）. 两项在内嵌与悬浮两种形态下都生效.
+- **悬浮态滚动条（v3.6.2）**：面板拖到视口下半部分再全部展开时，可滚高度只剩一百多像素，正文会冒出一根滚动条（内层还叠着第二根）. 现在按面板实际位置实时算出还能往下长多少，展开动画途中就生效；内嵌到侧栏时自动交还给侧栏自己的高度.
+- **面板可拖拽（v2.4.0）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住，**收起成横条后同样能拖**. **只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧. **横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」. 窗口缩放时按上次坐标重新钳制，不会累积漂移.
+- **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化. 进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度. 收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms 弹簧曲线），并尊重系统「减少动态效果」设置.
+- **下载光环**：下载进行时面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动），收缩成横条时同样包住. 现为**首尾透明的线性渐变 + 旋转整个渐变坐标系**——没有任何长度概念，面板无论多大、什么比例，光带宽度与流速都恒定. 中间完全不涂色，**不会透进面板内部糊成色块**. 光环是面板的子元素、尺寸由 `width:100%`/`height:100%` 决定，浏览器自己保证与面板同大，不用 JS 逐帧追几何.
+- **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）. 开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面. 毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清.
+- **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起. **在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起.
+- **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**. 前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留. 展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡.
+- **拖动时自动收起设置（v2.6.0，默认开）**：拖动面板时自动折叠「更多设置」，拖完自动恢复原状态——折叠区在拖动过程中只会碍事.
+- **不再弹保存对话框**：点下载后直接交给浏览器存到默认下载文件夹（`saveAs:false`）. 旧版弹的系统对话框在油猴里点「取消」不会回传任何回调，无法可靠判断，会造成「点取消却仍在下载」.
+- **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼.
+
+**性能**
+
+- **预取播放信息**（默认开）：打开回放页即在后台预取 csrf → 播放地址 → m3u8 切片索引，缓存 10 分钟. 点「下载本页回放」直接进入切片下载阶段. 文件名 placeholder 会直接回填为解析出的回放标题.
+- **并发线程自动识别**：默认按 CPU 逻辑核数 ×2 推算（4~16 封顶），网络 IO 密集场景下比固定 5 线程更快；「更多设置」里的说明文字会直接显示本次识别到的线程数. 手动改过之后以你的设置为准（`GM_setValue`），刷新后保留.
 
 **发送到下载器（实验性）**
 
-- **aria2 配置（v3.3.0, 实验性; v3.5.1 起移除独立推送按钮）**：更多设置里的 aria2 区块：主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」，设置持久化（密钥只写本地存储）. 切片通过**下载交给 aria2 总开关**（见下条）交给本机 aria2, 逐条 `aria2.addUri`, 用 `system.multicall` 每批 40 条一次 POST. **aria2 不支持 m3u8**, 所以是逐条推送而不是丢一个播放列表地址; 产物是 `seg00000.ts …` 这样的切片文件, 日志会给出 `ffmpeg -f concat` 合成命令.
-- **下载交给 aria2（v3.4.0, 实验性, 默认关）**：更多设置里的**总开关**. 打开后**所有下载任务**都改由本机 aria2 执行 —— 点「下载本页回放」以及队列里的每一个回放，面板只负责解析出切片清单并逐条 `addUri` 推送，浏览器内的切片下载 / 拼接 / 保存全部跳过；关闭时行为与之前完全一致. 开关状态持久化.
+- **下载交给 aria2（v3.4.0，默认关）**：更多设置里的**总开关**. 打开后**所有下载任务**都改由本机 aria2 执行——点「下载本页回放」以及队列里的每一个回放，面板只负责解析出切片清单并逐条 `addUri` 推送，浏览器内的切片下载 / 拼接 / 保存全部跳过；关闭时行为与之前完全一致. 开关状态持久化.
+- **aria2 配置（v3.3.0）**：更多设置里的 aria2 区块有主机 / 端口 / 密钥 / 保存目录 + 「🔌 测试连接」，设置持久化（密钥只写本地存储）. **aria2 不支持 m3u8**，所以是逐条推送而不是丢一个播放列表地址，用 `system.multicall` 每批 40 条一次 POST. 产物是 `seg00000.ts …` 这样的切片文件，日志会给出 `ffmpeg -f concat` 合成命令.
 - **诚实拒绝而不是假装能推**：AES-128 加密切片（密钥只在浏览器里解密）与 fMP4（含独立初始化段）会直接拒绝并在状态栏说明原因.
 - **错误分类**：`Unauthorized` 提示核对 `--rpc-secret`；`Invalid Request` / `No such method` 提示 aria2 版本过旧；连不上则提示确认已启动与端口. 测试连接用 `aria2.getVersion` 区分这几种情况.
 - **安全基线**：只连 `127.0.0.1` + 密钥. **不要**只开 `--rpc-allow-origin-all`（源码上它不校验 Origin/Host，任何网页都能借它往你磁盘写文件）.
 
-
-**面板外观**
-
-- **面板内嵌侧栏（v3.2.0, 实验性, 默认关）**：更多设置里打开「面板内嵌侧栏」后, 整个面板在**页面加载时**立刻内嵌到右侧「互动/简介」页签下方 (不是等解析完才嵌, 侧栏晚上线会自动重试). 面板与页签、内容区同为流内兄弟: 页签固定在上、永不被遮挡, 内容区按 flex 自行让位且照常滚动 (实测 1469/1180 两种视口: 页签条 50px, 面板 319/320 宽贴列内, 页签点 hitTest=TAB、内容点=CONTENT, 点「简介」照常切换); 点「收起」面板只剩横条, 空间立刻还给互动 (实测内容区 273px → 525px, 展开还原 273px). 内嵌态禁用拖拽与窗口重定位, 几何全交给 CSS, 光环照旧贴合面板; React 切页签把面板甩掉时 1.5s 内自动挂回, 侧栏消失 (窄窗口/退出登录) 则自动回到悬浮、回来再挂上; 开关状态持久化, 页面上没有侧栏时保持悬浮.
-- **内嵌滚动与底栏（v3.2.1 修复）**：面板内嵌侧栏时内容超出可见高度**现在可以直接滚轮下滑**（此前 `.bin` 是 `overflow:hidden`，实测内容 530px / 可见 271px，下载按钮被压到可见区下方 91px、更多设置 211px，等于点不到）；**版本号 / 检查更新那一栏永远钉在面板最底部**，不再需要滚到底才看得见（它已移出滚动区，收起时自动隐藏，不留空条）. 两项在内嵌与悬浮两种形态下都生效.
-- **内嵌紧凑排版（v3.3.1）**：面板内嵌侧栏时自动切换紧凑排版（行距、区块间距、控件高度、字号各收一档，队列输入框 2 行→1 行，aria2 区块与说明文字收紧），**实测可见比例 25% → 54%**（全部展开时内容 698px / 可见 376px）. 悬浮（未内嵌）时保持原样.
-- **内嵌高度可拉伸（v3.4.0）**：面板内嵌后顶边出现一条小抓手，**上下拖动即可调整面板高度**（默认 430px，实测可用上限 581px = 侧栏列 632 − 页签条 50，缩窗后自动收进可用范围；高度会被记住）. **「不能缩小到看不见文字」只约束队列框本身**：队列输入框有 `min-height` 兜底，你手动拖它也不会更矮，链接多了在框内滚动显示而不是被静默裁掉. 收起成横条时把手隐藏.
-- **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）. 开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面；状态持久化，刷新后保留. 毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清（v1.9.5 修复）.
-- **面板可拖拽（v2.4.0，v2.6.0 修复）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住（刷新后还在）. **收起成横条后同样能拖**（v2.6.0 修复，此前收起后完全拖不动）. **只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧（v2.6.0 修复，此前拖拽区圈住了整个表单，导致所有输入框和下拉框都点不动）. **横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」. **v3.0.3 修复**：原先横向钳制只在拖动那一刻算一次，窗口缩小后没人重算——把面板拖到最右再缩窗口，面板会有一大半（实测 392px 宽的面板有 240px）跑到屏幕外，鼠标再也点不到、只能刷新页面找回. 现窗口缩放时按上次坐标重新钳制一次，反复缩放也不会累积漂移.
-- **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起. **在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起.
-- **拖动时自动收起设置（v2.6.0）**：更多设置里可开关（默认开）. 拖动面板时自动折叠「更多设置」，拖完自动恢复原状态——折叠区在拖动过程中只会碍事. 不想这个行为可以在更多设置里关掉.
-- **面板视口自适应（v2.6.1）**：面板高度上限跟随窗口可用高度（`100vh - 140px`），超出部分在面板内滚动. **无论窗口多矮，全部展开也不会超出屏幕边界**——实测 700px 高的窗口下面板为 678px，正常笔记本视口完全够用，不必再为「设置展开后顶出屏幕」操心.
-- **更设置更紧凑（v2.6.0）**：数字输入框与下拉框两两并排一行，八个开关排成两列网格，整体高度比之前矮一半，不用再滚动半天找选项.
-- **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**. 前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留；手动收起/展开会同步「面板状态」. **面板状态读取做了归一化**：历史版本存过的布尔、数字、字符串杂散值（`true`/`1`/`'true'`）都能正确识别，首启自动统一成规范格式，下拉框始终与面板实际状态一致（v1.9.3 修复「实际收缩却显示默认展开」的错位）. 展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡.
-- **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化. 进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度. 收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms `cubic-bezier(0.16,1,0.3,1)` 弹簧曲线，宽高透明度完全同步），并尊重系统「减少动态效果」设置.
-- **下载光环**：下载进行时，面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动）. 用 SVG 圆角矩形 + `stroke-dash` 实现，3s 慢速、不翻转；中间完全不涂色，**不会透进面板内部糊成色块**. 收缩成横条时光环同样包住. **v2.6.2 修复**：原先用 `pathLength=400` 把光带比例写死，实际周长被强行归一化，光带缩成一小段甚至不可见；现按真实周长动态计算 dasharray，动画偏移用 CSS 变量 `--ring-perim`，整周期正好走完一圈. 光带跟随也补全了：进度条出现/宽度变化、折叠区展开收起等**不触发面板自身 transition** 的尺寸变化，现在也会同步光环. **v3.0.2 修复**：原先同步逻辑挂在面板的 `transitionstart` / `transitionend` 上，而这两个事件会从子元素冒泡上来——收起面板时子元素先结束过渡（如「收起」按钮淡出 150ms，比面板 280ms 短），逐帧循环被提前停掉，面板还在收缩、光环却停在旧尺寸，于是「框出一大块地方」「展开后不跟着变大」. **v3.0.5 改为纯 CSS 跟随**：光环现在是面板的子元素，尺寸由 `width:100%`/`height:100%` 决定，浏览器自己保证与面板同大，不再用 JS 逐帧追几何（那种做法在原理上必然漏——面板尺寸变化有十几种来源，漏追一次就永久错位）. SVG 用 `pathLength=100` 归一化周长，**v3.0.7 改用旋转渐变**：光带不再用 `stroke-dasharray`——dasharray 的「亮段:暗段」两个数必须与周长相关，写死则面板一小就占满整圈、一大就几乎不可见；而 `<rect>` 的 `pathLength` 归一化经实测也不可靠. 现改为首尾透明的线性渐变 + 旋转整个渐变坐标系，没有任何长度概念，面板无论多大、什么比例，光带宽度与流速都恒定.
-- **不再弹保存对话框**：点下载后直接交给浏览器存到默认下载文件夹（`saveAs:false`）. 旧版弹的系统对话框在油猴里点「取消」不会回传任何回调，无法可靠判断，会造成「点取消却仍在下载」. 现在无对话框、无需取消判断，完成状态栏会提示「已存入浏览器默认下载文件夹」.
-- **深色主题**：面板、输入框、按钮均为深色，暗光环境下不刺眼.
-
 **版本与更新**
 
-- 面板底部版本号旁是灰色小字「检查更新」（v1.9.4 起不再是按钮）：**自动检查默认开启**（更多设置可关），打开页面后在后台比对 GitHub 最新版本，发现新版时该处变为蓝色可点的「发现新版 x.y.z ↑」——**不会自动跳转，点击才打开更新页**. 关闭自动检查后，点「检查更新」手动比对，看到「发现新版」再点一次才跳转下载. 已是最新/检查失败会短暂显示后复原. **GitHub 不通时自动回落到 Gitee 镜像**.
+- 面板底部版本号旁是灰色小字「检查更新」（v1.9.4 起不再是按钮）：**自动检查默认开启**（更多设置可关），打开页面后在后台比对 GitHub 最新版本，发现新版时该处变为蓝色可点的「发现新版 x.y.z ↑」——**不会自动跳转，点击才打开更新页**. 关闭自动检查后点它手动比对，看到「发现新版」再点一次才跳转. **GitHub 不通时自动回落到 Gitee 镜像**.
+- **自选更新源（v1.9.11）**：更多设置里可切换 **Gitee（默认）/ GitHub / 自动**. 默认 Gitee——`raw.githubusercontent.com` 在国内时通时不通，Gitee 镜像通常稳定. 切换后立即按新源重新检查一次.
+- 每个版本都有 git tag 与 [CHANGELOG.md](CHANGELOG.md) 条目.
 
 **协议兼容**
 
@@ -100,10 +89,10 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **fMP4 / BYTERANGE**：支持 `#EXT-X-MAP` 初始化段与 `#EXT-X-BYTERANGE` 字节范围.
 - **并发**（1–16，默认自动识别 = CPU 逻辑核数 ×2，手动设置后以设置为准）与**重试**（1–10，默认 3，指数退避）.
 
-**v3.6.x 修复**
+**其他**
 
-- **悬浮态滚动条（v3.6.2）**：面板拖到视口下半部分再全部展开时，可滚高度只剩一百多像素，正文会冒出一根滚动条（内层还叠着第二根）. 现在按面板实际位置实时算出还能往下长多少，展开动画途中就生效；内嵌到侧栏时自动交还给侧栏自己的高度.
-- **队列失败原因重复前缀（v3.6.3）**：下载队列里某一项失败时，汇总出的原因会带两层「❌ 失败:」—— 状态栏写的是半角冒号，而剥前缀的正则只认全角冒号，两者对不上. 现已半角/全角都认.
+- **链接解析修复（v1.9.8）**：粘贴不带域名的裸查询串（`?roomId=…&liveUuid=…`）不再报「链接缺少 roomId/liveUuid」——旧代码在回退拼接时会把开头的 `?` 再拼一个，导致参数名带上多余问号而取不到.
+- **队列失败原因重复前缀（v3.6.3）**：下载队列里某一项失败时，汇总原因曾带两层「❌ 失败:」——状态栏写的是半角冒号，而剥前缀的正则只认全角冒号，两者对不上. 现已半角/全角都认.
 - **文案标点（v3.6.3）**：脚本与本文档统一使用英文句号，中文正文里的逗号/顿号/冒号/括号保持不变.
 
 ---
@@ -134,9 +123,9 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 ## 使用
 
 1. 打开回放页（`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`），右下角出现面板并自动读出链接.
-2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部）、并发、重试.
+2. 按需设置：**文件名**（留空用回放标题）、**输出格式**、**截取时长**（单位自动识别，留空为全部），并发与重试在「更多设置」里.
 3. 页面解析完成后会在后台预下载切片，日志会报完成进度. 此时点「下载本页回放」只需合并保存，实际耗时取决于预下载完成度；状态栏依次显示：切片 `n/N` → 拼接 → 保存.
-4. 下载完成后状态栏显示 `✅ 完成`, 文件已存入浏览器默认下载文件夹; v3.2.0 起不再在面板内弹出预览播放器与倍速播放.
+4. 下载完成后状态栏显示 `✅ 完成`，文件已存入浏览器默认下载文件夹；v3.2.0 起不再在面板内弹出预览播放器与倍速播放.
 5. 不用时可点「收起」把面板缩成右下角横条，点条即可展开；下载进行中光环保持可见.
 6. 也可把任意回放链接粘贴进输入框再点下载，不必停留在该页.
 
@@ -203,81 +192,73 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ## Features (v3.6.3)
 
-**Experimental (not yet proven)**
-
-- **Unified export (v3.6.0)**: the diagnostic log, .m3u8 playlist and chat export are merged into **one dropdown + one "⬇ Export" button** at the bottom of the panel — pick what to export (a `.txt` diagnostic log, an `.m3u8` playlist, or chat in `.txt` / `.json` / `.csv` / `.html`), click the button, and the choice is remembered across reloads.
-- **Chat export**: pick any "💬 chat" format in the export dropdown and click "⬇ Export" to pull the full comment history of the replay's chat (up to 20 cursor pages). Formats: `.txt` (one `[time] user: message` per line), `.json` (with export timestamp and metadata), `.csv` (BOM-guarded against mojibake), `.html` (opens or prints directly in a browser). The endpoint is `https://lv.dingtalk.com/live/listComment`, paged with a `loadMoreId` cursor, `sortType` required.
+> Per-feature fix history and measurements live in [CHANGELOG.md](CHANGELOG.md); only current behaviour is listed here.
 
 **Core**
 
 - **No login required**: `csrf` → `getOpenLiveInfoV2` to obtain the signed playback URL, fully anonymous.
 - **Output MP4 (default) / TS**: `.mp4` is remuxed in-browser by `mux.js`; `.ts` is a raw concatenation and has the widest compatibility.
-- **Resolution picker**: multi-variant playlists are detected automatically (default `Auto` = highest bandwidth = original resolution). After prefetch the dropdown is filled in with every variant and its bitrate, and switching re-prefetches; the choice persists. **Single-variant TS streams get their original resolution analysed automatically** — a Range request pulls the first 64KB, the TS is demuxed and the H.264 SPS is parsed (Baseline / Main / High plus cropping parameters), so the first dropdown entry reads `Auto (original 1280×720)`. The history log also carries `H.264 Main @3.1`-style profile/level detail (verified against a real replay).
-- **MP4 duration and progress bar fixed**: `mux.js` writes `0xFFFFFFFF` (the "unknown" sentinel) into `moov/mvhd/mdhd`, which makes players report a dozen-plus hours, refuse to seek, and freeze on one frame. The script walks `moof` boxes, recomputes the real duration from `tfdt + Σtrun`, and writes it back — a 30-minute replay then shows as 30 minutes and the file size is unchanged.
-- **Failure diagnostics**: when a segment fails, the status line prints a one-line summary (index + cause + what to try), grouped by error type (401/403 signature expired, 404 replay already purged, anything else: lower concurrency or update the script).
-- **Output history**: the status line shows only the newest entry by default; **click it** to expand the full history (up to 300 entries, scrollable) and click again to collapse. Full sentences wrap; nothing is clipped mid-character.
-- **Progress animation**: progress bar plus status line, both fully rendered (wrapped, never truncated), showing the current stage and `n/N` live.
+- **Resolution picker**: multi-variant playlists are detected automatically (default `Auto` = highest bandwidth = original resolution), and after prefetch the dropdown is filled in with every variant and its bitrate — switching re-prefetches, and the choice persists. **Single-variant TS streams get their original resolution analysed automatically** (a Range request pulls the first 64KB, the TS is demuxed and the H.264 SPS parsed, including cropping parameters), so the first entry reads `Auto (original 1280×720)`.
+- **MP4 duration and progress bar fixed**: `mux.js` writes `0xFFFFFFFF` (the "unknown" sentinel) into `moov/mvhd/mdhd`, which makes players report a dozen-plus hours, refuse to seek and freeze on one frame. The script walks `moof` boxes, recomputes the real duration from `tfdt + Σtrun`, and writes it back — media data and file size are unchanged.
+- **Download queue (v2.0.0)**: a multi-line queue under the link box (one replay per line) downloads them one after another. Line formats are lenient — a full URL, a bare query string, `roomId liveUuid`, or `roomId=liveUuid liveUuid=…` (the form you get copying from chat) all work; blank lines and `#` comments are ignored, and an unrecognised line is reported with its line number. **One failing replay does not abort the queue** — the remaining ones still finish before a "succeeded N · failed M" summary. Sequential rather than concurrent on purpose: running several at once only makes them fight for bandwidth and all slow down; what users want is to queue a few, not to have them compete.
+- **Integrity check (v1.9.7)**: after every segment is down, each one is validated — count complete, non-empty, and TS sync bytes aligned on the 188-byte period (the alignment point is searched within the first 188 bytes so legitimate segments carrying an ID3 or padding prefix still pass, while HTML error pages and truncated data are caught). On success the log reads `✅ 完整性校验通过：60/60 片 · 341.2 MB`; on failure **only the bad segments are nulled while the good ones stay as resume cache**, the offending indexes are listed, and pressing download refetches only those.
+- **Failed-segment-only retry (v1.9.10)**: after a failure or an integrity check, a 「♻ 只重试失败切片」 button appears showing exactly how many failed and which. Clicking it refetches **only** those — everything already downloaded is reused via the IndexedDB resume cache (since v1.9.6), which survives reloads and closed tabs. Changing resolution or pressing 「删除已下载」 hides the button so stale numbers never mislead.
 
-**Performance and prefetch**
+**Downloading**
 
-- **Size estimate (v1.9.7)**: before downloading, a `Range: bytes=0-0` request fetches a single byte of the first segment to read `Content-Range`, giving the segment size; `segment size × count` yields the total without downloading anything extra. The parse stage logs `预计体积: 约 340 MB（单片 5.8 MB × 60 片）`; during download the progress bar adds `downloaded/estimated`. A failed probe is skipped silently and never blocks the download.
-- **Integrity check (v1.9.7)**: after every segment is down, each one is validated — count complete, non-empty, and TS sync bytes aligned on the 188-byte period (the alignment point is searched within the first 188 bytes so legitimate segments carrying an ID3 or padding prefix still pass, while HTML error pages and truncated data are caught). On success the log reads `✅ 完整性校验通过：60/60 片 · 341.2 MB`; on failure **only the bad segments are nulled while the good ones stay as resume cache**, the offending indexes are listed, and pressing download refetches only those — never the whole replay again.
-- **Frame-accurate clipping (v2.5.0 entry point; experimental, off by default)**: enabled in 更多设置. Slice-boundary alignment is only ever exact to a slice length (usually 30s); with this on, a second pass refines it by walking the video stream frame by frame, collecting every keyframe and snapping the start and end to the nearest IDR. **Because frame-level refinement needs the complete segment set to establish a timeline, enabling it downloads the full replay first and then trims** (more traffic and time, in exchange for precision slice alignment cannot reach). Streams cut mid-way are re-wrapped with fresh SPS/PPS inserted at the head of the output — otherwise players find no decoding parameters and the first frames fail to decode. fMP4 replays are unsupported (no TS packet structure); when too few keyframes are found it falls back to slice alignment, so chasing precision never costs you the file. **Since v2.5.0 the clip area carries a visible pointer**: anyone who does not know the feature can click the blue "open frame-accurate clipping here" link in the tip line, which expands 更多设置 and flashes the switch twice. The switch title states plainly that it is off by default and what turning it on costs.
-- **Smart scheduling (v2.1.0)**: on by default in 更多设置. Two things at once — **greedy segment ordering**: a sample of segments from the head and tail is probed for real size (1-byte Range, nothing downloaded) and the largest ones go first, so the longest pole starts early and total completion time shrinks; **adaptive concurrency**: starts from your thread count, climbs toward 16 while segments keep succeeding, and the moment one fails it drops concurrency and backs off, then climbs again once things recover. When sizes cannot be probed (probe failed, or BYTERANGE segments) it falls back to the original order with no loss of function. The log reports the sample and the final concurrency. Turn it off and concurrency stays pinned at your setting, behaving exactly as in 1.9.x.
-- **Background pre-download after parsing (v2.7.0)**: as soon as the segment list is parsed on opening a replay page, segments are fetched silently in the background (weak concurrency of 2 so bandwidth is not hogged) and the log reports `✓ 后台预下载完成 12 片 · 441 KB，现在点下载只需合并保存`. By the time you decide to download, pressing the button finishes almost instantly. Can be turned off in 更多设置 (on by default); switched off, behaviour is identical to 2.6.x. **The pre-download lives in memory only and is never written to disk** — a page reload discards it, so no undeletable ghost cache is ever created. 「中断」 and 「删除已下载」 clear it too.
-- **Prefetch playback info**: the signed playback URL and segment index are fetched on page load so downloading can start without waiting.
-- **Automatic thread count**: network-IO bound, so the default is CPU logical cores × 2 (clamped to 4–16); once you set it manually, your value wins.
-
-**Download control**
-
-- **Pause / resume**: freeze progress and continue later; already-downloaded segments are kept.
-- **Interrupt**: stop this run; downloaded segments stay as resume cache and the next run continues from there.
-- **Delete downloaded**: wipe every cached segment of this replay.
-- **Failed-segment-only retry (v1.9.10)**: after a failure or an integrity check, a "retry failed segments only" button appears showing exactly how many failed and which (e.g. "2 failed last time (#3 #6)"). Clicking it refetches **only** those — everything already downloaded is reused via the IndexedDB resume cache (since v1.9.6), which survives reloads and closed tabs. Changing resolution or pressing 「删除已下载」 hides the button so stale numbers never mislead.
-- **Live speed and ETA**: EMA speed plus estimated time remaining, shown next to the progress bar.
-- **Completion / failure notifications (v1.9.9)**: optionally raise a system notification when a run ends — success or failure — carrying the filename and size (on failure, the cause and a suggested next step; clicking the notification returns to the panel). The sound is synthesised live with WebAudio (two rising tones on success, three falling on failure), no bundled audio file. Both switches live in 更多设置 and both are **off by default** — browser autoplay policies frequently block sound on pages without interaction, so having sound on by default just makes it look broken. The AudioContext is warmed up when you press download, which mitigates that policy. Turn them on if you want them.
+- **Pause / resume**: one key toggles by state; progress freezes completely while paused.
+- **Interrupt**: downloaded segments stay as resume cache and the next run continues from there (`♻ 命中断点缓存`) — nothing is refetched.
+- **Delete downloaded**: wipe every cached segment (IndexedDB included) and start over next time.
+- **Size estimate (v1.9.7)**: before downloading, a `Range: bytes=0-0` request fetches a single byte of the first segment to read `Content-Range`; `segment size × count` yields the total without downloading anything extra. A failed probe is skipped silently and never blocks the download.
+- **Live speed and ETA**: the progress bar shows `切片 6/12 · 1.2 MB/s · 剩 00:01` (EMA smoothed).
+- **Frame-accurate clipping (v2.5.0, off by default)**: slice-boundary alignment is only ever exact to a slice length (usually 30s); with this on, a second pass walks the video stream frame by frame, collects every keyframe and snaps the start and end to the nearest IDR. **Because frame-level refinement needs the complete segment set to establish a timeline, enabling it downloads the full replay first and then trims** (more traffic and time, in exchange for precision slice alignment cannot reach). fMP4 replays are unsupported (no TS packet structure); when too few keyframes are found it falls back to slice alignment, so chasing precision never costs you the file. The clip area carries a visible pointer: clicking the blue link expands 更多设置 and flashes the switch twice.
+- **Smart scheduling (v2.1.0, on by default)**: a sample of segments from the head and tail is probed for real size (1-byte Range, nothing downloaded) and the largest ones go first, so the longest pole starts early and total completion time shrinks; **adaptive concurrency** starts from your thread count, climbs toward 16 while segments keep succeeding, and the moment one fails it drops concurrency and backs off, then climbs again once things recover. When sizes cannot be probed (probe failed, or BYTERANGE segments) it falls back to the original order with no loss of function.
+- **Background pre-download after parsing (v2.7.0, on by default)**: as soon as the segment list is parsed, segments are fetched silently in the background (weak concurrency of 2 so bandwidth is not hogged) and pressing the button later finishes almost instantly. **The pre-download lives in memory only and is never written to disk** — a reload discards it, so no undeletable ghost cache is ever created. 「中断」 and 「删除已下载」 clear it too.
+- **Completion / failure notifications (v1.9.9, off by default)**: optionally raise a system notification when a run ends, its title stating success or failure and its body carrying the filename and size. The sound is synthesised live with WebAudio (two rising tones on success, three falling on failure), no bundled audio file. Both switches are **off by default** because browser autoplay policies frequently block sound on pages without interaction, so having sound on by default just makes it look broken.
 
 **After the download**
 
-- **Export an .m3u8 playlist (v1.9.12)**: pick "📄 m3u8 playlist" in the export dropdown and click "⬇ Export" to write the segment list of the currently selected resolution as a standard playlist, ready for VLC / ffmpeg / any other downloader, or for archiving. Output is strict HLS: `TARGETDURATION` rounded up to the longest segment, `EXTINF` and segment URLs strictly alternating, `EXT-X-MAP` before the first `EXTINF`, `BYTERANGE` before its own segment URL, a `KEY` declaration (with IV) when AES-128 is in use, and `EXT-X-ENDLIST` at the end. Deliberately no BOM: some parsers would read the first line as a tag name. Verified with ffmpeg — duration and segment count match exactly.
-- **One-click diagnostic log (v1.9.11)**: pick "📋 diagnostic log" in the export dropdown and click "⬇ Export" to write a `.txt` containing the script version, browser UA, hardware concurrency and the auto-detected thread count, parse results (segment count / duration / encryption / fMP4 / variant list), cache and pending-retry indexes, every setting, the outcome of each run, and **uncaught page exceptions and promise rejections**. Signatures inside playback URLs (`auth_key` / `token` / `sign` / `signature`, in any case variant) are stripped automatically — diagnostic text tends to get pasted straight into public issues, and leaving them in would leak one-time credentials.
-- **Custom resolution (v1.9.11)**: besides the variants a playlist declares, the dropdown lists common tiers **not exceeding the original resolution** (4K / 1440p / 1080p / 900p / 720p / 540p / 480p / 360p / 270p); a trailing `自定义…` entry accepts `宽x高`, including the common hand-typed shapes `1920X1080`, `1920×1920`, full-width digits and a Chinese colon. Whatever you type is matched to the closest real variant — **and when no variant matches exactly it says which one it actually used**, so you are never left thinking you downloaded a resolution you did not ask for. With no usable variant it says so plainly and returns to `Auto`.
-- **Download queue (v2.0.0)**: a multi-line queue under the link box (one replay per line) downloads them one after another via 「▶ 开始队列」. Line formats are lenient — a full URL, a bare query string, `roomId liveUuid`, or `roomId=liveUuid liveUuid=…` (the form you get copying from chat) all work; blank lines and `#` comments are ignored, and an unrecognised line is reported on its own with its line number. **One failing replay does not abort the queue** — queue five, let the third one's signature expire, and the remaining two still finish before a "succeeded N · failed M" summary. Sequential rather than concurrent on purpose: running several replays at once only makes them fight for bandwidth and all slow down; what users want is to queue a few, not to have them compete.
-- **Choose the update source (v1.9.11)**: switch between **Gitee (default) / GitHub / Auto** in 更多设置. Gitee is the default because `raw.githubusercontent.com` is unreliable from mainland China while the Gitee mirror usually is not. Switching re-runs the check immediately and the "new version found" link follows the chosen source.
-- **Link parsing fix (v1.9.8)**: pasting a bare query string without a domain (`?roomId=…&liveUuid=…`) no longer fails with "link is missing roomId/liveUuid" — the old fallback prepended another `?`, which glued an extra question mark onto the first parameter name so nothing resolved.
 - **Custom filename**: type it in the panel; **left blank it uses the replay title** (the placeholder shows that title). An accidental `.mp4` / `.ts` suffix is stripped automatically. With "append timestamp" enabled the placeholder gains `_timestamp` and refreshes every second.
+- **Clip range**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired. A two-part value (`1:30`) is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` rather than rewritten on a guess. An end past the total duration is clamped to the end with a note.
+- **Unified export (v3.6.0)**: the diagnostic log, .m3u8 playlist and chat export are merged into **one dropdown + one 「⬇ 导出」 button** at the bottom of the panel, and the choice is remembered across reloads. Three kinds of content:
+  - **📋 Diagnostic log `.txt`** — script version, browser UA, hardware concurrency and the auto-detected thread count, parse results (segment count / duration / encryption / fMP4 / variant list), cache and pending-retry indexes, every setting, the outcome of each run, and **uncaught page exceptions and promise rejections**. Signatures inside playback URLs (`auth_key` / `token` / `sign` / `signature`, in any case variant) are stripped automatically — diagnostic text tends to get pasted straight into public issues, and leaving them in would leak one-time credentials.
+  - **📄 m3u8 playlist** — the segment list of the currently selected resolution written as a standard playlist, ready for VLC / ffmpeg / any other downloader, or for archiving. Output is strict HLS: `TARGETDURATION` rounded up to the longest segment, `EXTINF` and segment URLs strictly alternating, `EXT-X-MAP` before the first `EXTINF`, `BYTERANGE` before its own segment URL, a `KEY` declaration (with IV) when AES-128 is in use, and `EXT-X-ENDLIST` at the end. Deliberately no BOM: some parsers would read the first line as a tag name.
+  - **💬 Chat** — the full comment history of the replay (up to 20 cursor pages). `.txt` (one `[time] user: message` per line), `.json` (with export timestamp and metadata), `.csv` (BOM-guarded against mojibake), `.html` (opens or prints directly). The endpoint is `https://lv.dingtalk.com/live/listComment`, paged with a `loadMoreId` cursor, `sortType` required.
+- **Custom resolution (v1.9.11)**: besides the variants a playlist declares, the dropdown lists common tiers **not exceeding the original resolution** (4K / 1440p / 1080p / 900p / 720p / 540p / 480p / 360p / 270p); a trailing 「自定义…」 entry accepts `宽x高`, including the common hand-typed shapes `1920X1080`, `1920×1080`, full-width digits and a Chinese colon. Whatever you type is matched to the closest real variant — **and when no variant matches exactly it says which one it actually used**, so you are never left thinking you downloaded a resolution you did not ask for.
 
-**Clipping**
+**Panel**
 
-- **Clip range (unit auto-detected since v2.3.0)**: downloads only the segments between 开始 and 结束; leave blank for the whole replay. Aligned to slice boundaries (about 30s granularity). **The fields no longer prescribe a format** — once the total duration is parsed the panel tells you the cap: under an hour it offers `mm:ss`, at or above an hour it switches to `hh:mm:ss` (hours are not capped at 99, so `100:00:00` is valid), and the grey hint updates live. **Zero-padding on blur** (`1:2:3` → `01:02:03`), with full-width digits, Chinese colons, whitespace and zero-width characters auto-repaired as before. A two-part value (`1:30`) is never rewritten on a guess — it is inherently ambiguous between `mm:ss` and `hh:mm`, so it is parsed as `mm:ss` and out-of-range input reports a usable form. An end past the total duration is clamped to the end with a note.
-- **Filename timestamp**: append `_YYYYMMDD-HHmmss`.
+- **Panel docked into the side column (v3.2.0, off by default)**: switch it on in 更多设置 and the whole panel embeds under the 互动/简介 tabs the moment the page loads (never after parsing; if the column mounts late it retries). The panel joins the flow as the last sibling of the tab bar, so the tabs stay on top and untouched and the content area simply flexes and keeps scrolling. A docked panel switches to a denser layout (measured visible ratio 25% → 54% with everything expanded), and a grip on the top edge resizes it (default 430px, re-clamped when the window shrinks, value remembered). While docked, dragging and window re-positioning are disabled and every geometric value belongs to CSS; the halo keeps hugging the panel. A 1.5s watchdog re-attaches the panel if a React re-render evicts it, and if the side column disappears (narrow window / logged out) the panel falls back to floating and re-docks when it returns.
+- **Scrolling and pinned footer (fixed in v3.2.1)**: with the panel docked, content taller than the visible height **scrolls with the wheel** (`.bin` used to be `overflow:hidden`, which pushed the download button 91px and 更多设置 211px below the fold — unreachable), and the **version / 检查更新 footer is pinned to the very bottom of the panel**, always visible without scrolling (it hides itself when collapsed, leaving no empty strip). Both hold in the docked and floating forms.
+- **Floating-panel scrollbar (v3.6.2)**: drag the panel into the lower half of the viewport and expand everything, and the usable height drops to about a hundred pixels — a scrollbar appears on the body, stacked on top of a second one inside it. The cap is now measured from the panel's real position, so it is already correct mid-animation; when the panel is docked into the side column it hands the height back to the column.
+- **Draggable panel (v2.4.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads, and it drags while collapsed too (fixed in v2.6.0). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken". The panel is re-clamped against the last known position on every window resize, so repeated resizing does not accumulate drift.
+- **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
+- **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge, and wraps the collapsed bar too. It is now a **linear gradient transparent at both ends with its whole coordinate system rotating** — there is no length in it at all, so band width and speed stay constant whatever the panel's size or aspect ratio. **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block. The halo is a child of the panel sized by `width:100%` / `height:100%`, so the browser itself guarantees it matches — no JS chasing geometry per frame.
+- **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur, letting the player show through; the state persists. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content.
+- **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
+- **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The expand/collapse arrow is a CSS chevron (smooth 90° flip) with a 260ms spring-out transition.
+- **Auto-collapse settings while dragging (v2.6.0, on by default)**: collapsible sections fold away while you drag and are restored when you release — the fold-out area only gets in the way during a drag. Turn it off in 更多设置.
+- **No save dialog**: the browser writes the file straight to its default download directory (`saveAs:false`), so there is nothing to confirm — and the old system dialog never reported a dismissal back inside Tampermonkey, which made "cancelled but still downloading" unavoidable.
+- **Dark theme**: dark by design, with no light or system theme option.
 
-**Hand off to a downloader**
+**Performance**
 
-- **aria2 settings (v3.3.0, experimental; standalone push button removed in v3.5.1)**: the aria2 block in 更多设置 has host / port / secret / save directory plus 「🔌 测试连接」, all persisted (the secret only ever goes into local storage). Segments reach the local aria2 through the **hand-every-download-to-aria2 master switch** (next bullet), one `aria2.addUri` per URL, batched 40 per POST via `system.multicall`. **aria2 does not support m3u8**, so segments are pushed individually rather than handing over a playlist URL; the artefacts are `seg00000.ts …` files and the log prints the matching `ffmpeg -f concat` command.
-- **Hand every download to aria2 (v3.4.0, experimental, off by default)**: a master switch in 更多设置. When on, **all** download tasks are executed by the local aria2 — pressing 「下载本页回放」 and every item in the queue alike; the panel only parses the segment list and pushes each URL with `addUri`, and the in-page segment fetch / concat / save are all skipped. With it off, behaviour is exactly as before. The switch persists.
+- **Prefetch playback info** (on by default): the csrf token, playback URL and m3u8 segment index are fetched on page load and cached for 10 minutes, so pressing 「下载本页回放」 goes straight to downloading. The filename placeholder is filled in with the parsed replay title.
+- **Automatic thread count**: network-IO bound, so the default is CPU logical cores × 2 (clamped to 4–16), faster than a fixed 5 threads; the note in 更多设置 shows the count detected this time. Once you set it manually, your value wins and persists via `GM_setValue`.
+
+**Hand off to a downloader (experimental)**
+
+- **Hand every download to aria2 (v3.4.0, off by default)**: a master switch in 更多设置. When on, **all** download tasks are executed by the local aria2 — pressing 「下载本页回放」 and every item in the queue alike; the panel only parses the segment list and pushes each URL with `addUri`, and the in-page segment fetch / concat / save are all skipped. With it off, behaviour is exactly as before. The switch persists.
+- **aria2 settings (v3.3.0)**: the aria2 block in 更多设置 has host / port / secret / save directory plus 「🔌 测试连接」, all persisted (the secret only ever goes into local storage). **aria2 does not support m3u8**, so segments are pushed individually rather than handing over a playlist URL, batched 40 per POST via `system.multicall`. The artefacts are `seg00000.ts …` files and the log prints the matching `ffmpeg -f concat` command.
 - **Refuses honestly instead of pretending**: AES-128 encrypted segments (the key only exists in the browser) and fMP4 (separate init segment) are rejected with the reason stated in the status line.
 - **Error classes**: `Unauthorized` → check `--rpc-secret`; `Invalid Request` / `No such method` → aria2 too old; unreachable → confirm it is running and the port is right. 「测试连接」 uses `aria2.getVersion` to tell these apart.
 - **Security baseline**: 127.0.0.1 + secret only. **Never** rely on `--rpc-allow-origin-all` alone — in the source it does not validate Origin/Host, so any web page could use it to write files onto your disk.
 
+**Versions and updates**
 
-**Panel appearance**
-
-- **Panel docked into the side column (v3.2.0, experimental, off by default)**: switch it on in 更多设置 and the whole panel embeds under the 互动/简介 tabs the moment the page loads (never after parsing; if the column mounts late it retries for 15s). The panel joins the flow as the last sibling of the tab bar, so the tabs stay on top and untouched and the content area simply flexes and keeps scrolling (measured at both 1469 and 1180 viewport: tab bar 50px, panel 319/320 wide inside the column, hitTest of a tab point = TAB and of a content point = CONTENT, clicking 简介 still switches the view). Collapsing the panel shrinks it to the bar and hands the space straight back to the content (273px → 525px measured, 273px restored on expand). While docked, dragging and window re-positioning are disabled and every geometric value belongs to CSS; the halo keeps hugging the panel. A 1.5s watchdog re-attaches the panel if a React re-render evicts it, and if the side column disappears (narrow window / logged out) the panel falls back to floating and re-docks when it returns; the switch persists and stays floating when there is no column at all.
-- **Scrolling and pinned footer (fixed in v3.2.1)**: with the panel docked, content taller than the visible height now **scrolls with the wheel** (`.bin` used to be `overflow:hidden`; measured 530px of content in 271px of space, which pushed the download button 91px and 更多设置 211px below the fold — unreachable), and the **version / 检查更新 footer is pinned to the very bottom of the panel**, always visible without scrolling (it moved out of the scroller and hides itself when collapsed). Both hold in the docked and floating forms.
-- **Compact layout while docked (v3.3.1)**: a docked panel automatically switches to a denser layout (row and section spacing, control heights and font sizes each one step tighter, the queue box goes from 2 rows to 1, the aria2 block and its hint are trimmed) — **measured visible ratio 25% → 54%** (698px of content in 376px of space with everything expanded). Floating panels keep the roomy layout.
-- **Resizable docked height (v3.4.0)**: a small grip appears on the top edge once docked; **drag it up or down to resize the panel** (default 430px, measured ceiling 581px = column 632 − tab bar 50, re-clamped when the window shrinks, and the value is remembered). **"must not shrink until the text is gone" applies to the queue box alone**: it has a `min-height` floor, so dragging it smaller is impossible, and longer link lists scroll inside it instead of being silently cut. The grip hides in the collapsed bar.
-- **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur and a light border, letting the player show through; the state persists across reloads. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content (v2.9.5 fix).
-- **Draggable panel (v2.4.0, fixed in v2.6.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads. It drags while collapsed too (v2.6.0 fix — before that a collapsed panel could not be moved at all). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken" — the page scrolls, so the panel scrolls with it. **v3.0.3 fix**: the horizontal clamp used to run only at drag time, and nothing recomputed it after a resize — drag the panel to the right edge and then shrink the window and most of it leaves the screen (measured: 240px of a 392px panel), the mouse can no longer reach it at all, and the only way back is reloading the page. The panel is now re-clamped against the last known position on every window resize, and repeated resizing does not accumulate drift.
-- **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
-- **Auto-collapse settings while dragging (v2.6.0)**: collapsible sections fold away while you drag and are restored when you release; a toggle in 更多设置 (on by default) turns this off.
-- **Viewport-aware panel (v2.6.1)**: the panel's height is capped to the available window height (`100vh - 140px`) with the remainder scrolling inside. **Fully expanded, the panel never exceeds the screen** — measured at 678px in a 700px-tall window, which comfortably covers ordinary laptop viewports.
-- **Compact 更多设置 (v2.6.0)**: number fields and dropdowns pair up on one row, and eight switches lay out in a two-column grid — roughly half the previous height, so options no longer need scrolling to find.
-- **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The default-state dropdown reads back the real initial state from a single source of truth, so the value shown always matches the panel's actual state (v1.9.3 fixed a mismatch where the panel was collapsed but the dropdown said "expanded").
-- **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
-- **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge. Built as an SVG rounded-rect with `stroke-dash` — 3s, slow, and it does not flip (rotating a non-square element looks jittery and fake). **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block, and it wraps the collapsed bar too. **v2.6.2 fix**: the band used to be sized with a hard-coded `pathLength=400` against the real perimeter, which squashed the dash pattern into a tiny stub or hid it entirely; the dash array is now computed from the actual perimeter and the animation offset uses a `--ring-perim` CSS variable so one cycle travels exactly one full loop. **v3.0.2 fix**: the follow logic was wired to the panel's `transitionstart` / `transitionend`, and both bubble up from child elements — collapsing the panel made a child finish first (the 「收起」 button fades in 150ms versus the panel's 280ms), which stopped the per-frame loop while the panel was still shrinking, leaving the halo frozen at its old size and framing a large empty area. **v3.0.5 makes it pure CSS**: the halo is now a child of the panel sized by `width:100%`/`height:100%`, so the browser itself guarantees it matches the panel — no more chasing geometry from JS, which could only ever track the cases it knew about. **v3.0.7 uses a rotating gradient instead**: the band no longer relies on `stroke-dasharray` — a dash pattern needs two perimeter-relative lengths, so hard-coding them makes the band fill a small panel and vanish on a large one, and `pathLength` normalisation on `<rect>` proved unreliable under measurement. The band is now a linear gradient transparent at both ends with its whole coordinate system rotating, which has no length in it at all: band width and speed stay constant whatever the panel's size or aspect ratio.
-- **No save dialog**: the browser writes the file straight to its default download directory (`saveAs:false`), so there is nothing to confirm and a dismissed dialog can no longer leave the script waiting forever.
-- **Dark theme**: dark by design, with no light or system theme option.
+- The panel footer shows the version beside a small grey 「检查更新」 label (no longer a button since v1.9.4). **The automatic check is on by default** (toggle in 更多设置): on page load it compares against the latest release in the background and, when a newer one exists, that label becomes a clickable blue "发现新版 x.y.z ↑". **It never navigates on its own — click to open the update page.** With the automatic check off, pressing it checks manually and you still click once more to reach the download. **If GitHub is unreachable it falls back to the Gitee mirror.**
+- **Choose the update source (v1.9.11)**: switch between **Gitee (default) / GitHub / Auto** in 更多设置. Gitee is the default because `raw.githubusercontent.com` is unreliable from mainland China while the Gitee mirror usually is not. Switching re-runs the check immediately.
+- Every release is tagged and recorded in [CHANGELOG.md](CHANGELOG.md).
 
 **Protocol compatibility**
 
@@ -286,18 +267,11 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **fMP4 / BYTERANGE**: supports `#EXT-X-MAP` initialisation segments and `#EXT-X-BYTERANGE` byte ranges.
 - **Concurrency** (1–16, auto-detected by default as CPU logical cores × 2, your setting wins once set) and **retries** (1–10, default 3, exponential backoff).
 
-**Versions and updates**
+**Miscellaneous**
 
-- The panel footer shows the version beside a small grey "check for updates" label (no longer a button since v1.9.4). **The automatic check is on by default** (toggle in 更多设置): on page load it compares against the latest release in the background and, when a newer one exists, that label becomes a clickable blue "new version x.y.z ↑". **It never navigates on its own — click to open the update page.** With the automatic check off, pressing it checks manually and you still click once more to reach the download. "Already latest" and check failures appear briefly and then revert. **If GitHub is unreachable it falls back to the Gitee mirror.**
-- Every release is tagged and recorded in [CHANGELOG.md](CHANGELOG.md).
-- CI runs `node --check`, the unit tests, and a **version-bump guard** that fails the build if `.user.js` changed without `@version` increasing — the exact trap 1.6.8 fell into, where a fix shipped but users never received it.
-
-**v3.6.x fixes**
-
-- **Floating-panel scrollbar (v3.6.2)**: drag the panel into the lower half of the viewport and expand everything, and the usable height drops to about a hundred pixels — a scrollbar appears on the body, stacked on top of a second one inside it. The cap is now measured from the panel's real position, so it is already correct mid-animation; when the panel is docked into the side column it hands the height back to the column.
+- **Link parsing fix (v1.9.8)**: pasting a bare query string without a domain (`?roomId=…&liveUuid=…`) no longer fails with "link is missing roomId/liveUuid" — the old fallback prepended another `?`, which glued an extra question mark onto the first parameter name so nothing resolved.
 - **Duplicated queue failure prefix (v3.6.3)**: when an item in the download queue failed, the summarised reason carried two layers of `❌ 失败:` — the status line wrote a half-width colon while the stripping regex only accepted a full-width one, so the two never matched. Both widths are accepted now.
 - **Punctuation (v3.6.3)**: the script and this document use English full stops throughout; commas, ideographic commas, colons and parentheses inside Chinese prose are left as they are.
-
 
 ---
 
@@ -327,8 +301,8 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 ## Usage
 
 1. Open the replay page (`n.dingtalk.com/dingding/live-room/index.html?roomId=...&liveUuid=...`); the panel appears at the bottom-right and reads the link automatically.
-2. Optionally set **filename** (blank uses the replay title), **output format**, **clip range** (units auto-detected, blank means everything), concurrency and retries.
-3. Once the page has parsed, segments are pre-downloaded in the background and the log reports progress. Pressing "下载本页回放" then only has to merge and save; how long that takes depends on how much the pre-download already finished. The status line shows segments `n/N` → merge → save.
+2. Optionally set **filename** (blank uses the replay title), **output format** and **clip range** (units auto-detected, blank means everything); concurrency and retries live in 更多设置.
+3. Once the page has parsed, segments are pre-downloaded in the background and the log reports progress. Pressing 「下载本页回放」 then only has to merge and save; how long that takes depends on how much the pre-download already finished. The status line shows segments `n/N` → merge → save.
 4. When the download finishes the status line shows `✅ 完成` and the file lands in the browser default download folder; since v3.2.0 no preview player and no speed control is popped into the panel.
 5. When you do not need it, press 「收起」 to shrink the panel to a slim bar at the bottom-right; click it to expand. The halo stays visible while downloading.
 6. You can also paste any replay link into the box and press download without staying on that page.
