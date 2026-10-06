@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.2
-// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
+// @version      3.6.3
+// @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画.
 // @author       agent
 // @license      MIT
 // @match        https://n.dingtalk.com/dingding/live-room/*
@@ -36,10 +36,10 @@
     //   端点 /jsonrpc, 必须 POST (GET 报 Invalid Request);
     //   密钥作为 params[0] = "token:<secret>", aria2 先摘前缀再校验;
     //   所有数字都返回 JSON 字符串 (无 float) → 后面 parseInt 不可省;
-    //   失败统一 {error:{code,message}}, 坏 token 报 Unauthorized。
-    // 安全基线: 只连 127.0.0.1 + 密钥。**不要**让用户单独开 --rpc-allow-origin-all:
+    //   失败统一 {error:{code,message}}, 坏 token 报 Unauthorized.
+    // 安全基线: 只连 127.0.0.1 + 密钥.**不要**让用户单独开 --rpc-allow-origin-all:
     // 源码上它不校验 Origin/Host, 且 JSONP 与 JSON 同一码路, 任何网页都能用
-    // dir/out 往任意路径写文件。
+    // dir/out 往任意路径写文件.
     const ARIA2_HOST_DEF = '127.0.0.1';
     const ARIA2_PORT_DEF = 6801;
     const UPDATE_URL = 'https://raw.githubusercontent.com/Vectg/dingtalk-live-replay-downloader/main/%E9%92%89%E9%92%89%E7%9B%B4%E6%92%AD%E5%9B%9E%E6%94%BE%E4%B8%8B%E8%BD%BD.user.js';
@@ -49,10 +49,10 @@
         catch (e) { return '未知'; }
     })();
 
-    // 通知开关初值；面板初始化时由 GM_getValue 覆盖。默认值与 bindChk 一致：
-    // 系统通知开（无声可靠），提示音关（自动播放策略常拦，容易让人以为坏了）。
+    // 通知开关初值；面板初始化时由 GM_getValue 覆盖. 默认值与 bindChk 一致：
+    // 系统通知开（无声可靠），提示音关（自动播放策略常拦，容易让人以为坏了）.
     // 做成 setter 而不是裸变量：notify/beep 被单元测试抽出单独执行时，
-    // 闭包外的模块变量不在作用域内，必须有个显式注入点才能测。
+    // 闭包外的模块变量不在作用域内，必须有个显式注入点才能测.
     let notifyFlags = { desktop: true, sound: false };
     function setNotifyFlags(desktop, sound) {
         notifyFlags = { desktop: !!desktop, sound: !!sound };
@@ -90,9 +90,9 @@
     }
 
     // ---------- 诊断信息收集（供「导出诊断日志」用） ----------
-    // 目标：用户点一下就能把完整现场导成 .txt 发给开发者，省掉来回截图/猜测。
+    // 目标：用户点一下就能把完整现场导成 .txt 发给开发者，省掉来回截图/猜测.
     // 只收集本地状态，不含任何页面内容、不含 m3u8 签名串（签名是一次性的、
-    // 贴出来也复现不了，反而容易被当成泄露凭证）。
+    // 贴出来也复现不了，反而容易被当成泄露凭证）.
     const DIAG = {
         errors: [],        // 未捕获异常 / GM 请求异常
         runs: [],          // 每次下载的结论
@@ -117,7 +117,7 @@
         });
         if (DIAG.errors.length > 50) DIAG.errors.shift();
     });
-    // 记一次下载结论。err 非空即失败。
+    // 记一次下载结论.err 非空即失败.
     function diagRun(ok, summary, detail) {
         DIAG.runs.push({
             t: new Date().toISOString(),
@@ -268,13 +268,13 @@
     }
 
     // ---------- 核心 API ----------
-    // 重要：GET /csrf 绝不能带 Origin 头，否则 lv.dingtalk.com 返回 403 Invalid CORS request。
+    // 重要：GET /csrf 绝不能带 Origin 头，否则 lv.dingtalk.com 返回 403 Invalid CORS request.
     async function getCsrf() {
         const r = await gmx({ method: 'GET', url: CSRF_URL });
         return JSON.parse(r.response).token;
     }
 
-    // POST V2 必须同时带 XSRF-TOKEN cookie 与 X-XSRF-TOKEN 头（两者值均为同一 token）。
+    // POST V2 必须同时带 XSRF-TOKEN cookie 与 X-XSRF-TOKEN 头（两者值均为同一 token）.
     async function getPlayback(roomId, liveUuid, csrfToken) {
         const body = JSON.stringify({ roomId, liveUuid });
         const r = await gmx({
@@ -294,10 +294,10 @@
     }
 
     // ---------- 聊天记录接口 (v3.5.0, 实验性) ----------
-    // 签名是实测出来的: GET + loadMoreId(必填,可空串) + sortType(必填整数)。
-    // POST → 405; 缺 sortType 或 loadMoreId → 400 并在 message 里点名缺哪个。
+    // 签名是实测出来的: GET + loadMoreId(必填,可空串) + sortType(必填整数).
+    // POST → 405; 缺 sortType 或 loadMoreId → 400 并在 message 里点名缺哪个.
     // 登录态下浏览器内真实请求仍返回 errorCode 19004「游客身份失效」——
-    // 该接口要的不是网页登录态, 所以这里如实抛出, 不伪造内容。
+    // 该接口要的不是网页登录态, 所以这里如实抛出, 不伪造内容.
     const CHAT_URL = 'https://lv.dingtalk.com/live/listComment';
     async function fetchChatPage(roomId, liveUuid, loadMoreId) {
         const qs = 'roomId=' + encodeURIComponent(roomId) +
@@ -320,7 +320,7 @@
         }
         return j && (j.result || j.data || j);
     }
-    // 按 loadMoreId 游标翻页, 最多 maxPages 页; 返回规范化后的消息数组。
+    // 按 loadMoreId 游标翻页, 最多 maxPages 页; 返回规范化后的消息数组.
     async function fetchAllChat(roomId, liveUuid, maxPages) {
         const all = [];
         let cursor = '';
@@ -379,8 +379,8 @@
     }
 
     // 不弹保存对话框：GM_download 的 saveAs 对话框在油猴里点「取消」也不会回传任何回调，
-    // 无法可靠判断是否已取消（超时猜测会造成「点取消却仍在下载」）。改为直接交给浏览器
-    // 存到默认下载目录，无对话框、无需取消判断。
+    // 无法可靠判断是否已取消（超时猜测会造成「点取消却仍在下载」）. 改为直接交给浏览器
+    // 存到默认下载目录，无对话框、无需取消判断.
     function downloadBlob(blob, filename) {
         return new Promise((resolve, reject) => {
             const url = URL.createObjectURL(blob);
@@ -417,11 +417,11 @@
 
     // ---------- 完成/失败通知（系统通知 + 提示音） ----------
     // 提示音用 WebAudio 现场合成，不带 @resource 音频文件：少一个外部依赖，
-    // 也不会因为 CDN 挂了就静音。浏览器自动播放策略会拦未交互页面的出声，
-    // 所以 AudioContext 要在用户点击「下载」时预热（见 primeNotifyAudio）。
+    // 也不会因为 CDN 挂了就静音. 浏览器自动播放策略会拦未交互页面的出声，
+    // 所以 AudioContext 要在用户点击「下载」时预热（见 primeNotifyAudio）.
     // audioCtx 走 getter/setter 而不是裸 let：单元测试把这些函数从 IIFE 里抽出来
     // 单独执行时，闭包外的变量不在作用域内，裸 let 会直接 ReferenceError；
-    // 有 setter 才能注入一个假 AudioContext 测出「完成 2 声 / 失败 3 声」。
+    // 有 setter 才能注入一个假 AudioContext 测出「完成 2 声 / 失败 3 声」.
     let _audioCtx = null;
     function getAudioCtx() { return _audioCtx; }
     function setAudioCtx(ctx) { _audioCtx = ctx; }
@@ -437,8 +437,8 @@
         } catch (e) { /* 用户点过下载仍失败就静音，不影响下载 */ }
     }
     // times 里的数字直接是半音偏移（相对 C5），正数上行、负数下行：
-    // 完成传 [0, 4]（C5→E5 上行两声），失败传 [0, -3, -7]（下行三声）。
-    // 音量刻意压低（0.16）避免突兀。
+    // 完成传 [0, 4]（C5→E5 上行两声），失败传 [0, -3, -7]（下行三声）.
+    // 音量刻意压低（0.16）避免突兀.
     function beep(times, type) {
         if (!notifyFlags.sound) return;
         try {
@@ -460,7 +460,7 @@
         } catch (e) { }
     }
     // text 只在通知里带一句结论，不塞整段错误详情（系统通知宽度有限，
-    // 完整信息仍以面板历史为准）。onclick 让用户点通知能聚焦面板。
+    // 完整信息仍以面板历史为准）.onclick 让用户点通知能聚焦面板.
     function notify(title, text, ok) {
         try { beep(ok ? [0, 4] : [0, -3, -7], ok ? 'sine' : 'triangle'); }
         catch (e) { }
@@ -486,7 +486,7 @@
 
     // ---------- mux.js 懒加载（不再 @require，避免启动依赖外部 CDN） ----------
     // 油猴沙箱里 window 是代理对象，UMD 挂的全局不一定能从 window 取到，
-    // 所以查多个位置，并在 Function 尾部显式 return。
+    // 所以查多个位置，并在 Function 尾部显式 return.
     function pickMux() {
         const cands = [];
         try { if (typeof unsafeWindow !== 'undefined' && unsafeWindow.muxjs) cands.push(unsafeWindow.muxjs); } catch (e) { }
@@ -526,8 +526,8 @@
         }
         if (!init || !frags.length) throw new Error('mux.js 转封装无输出');
         // 关键：mux.js 输出是给 MSE 流式播放用的，moov 里 mvhd/tkhd/mdhd 的 duration
-        // 被写成 0xFFFFFFFF（=unknown 哨兵），播放器会显示成 13+ 小时且无法拖动进度条。
-        // 必须扫描 moof(tfdt+trun) 算出真实时长后写回。
+        // 被写成 0xFFFFFFFF（=unknown 哨兵），播放器会显示成 13+ 小时且无法拖动进度条.
+        // 必须扫描 moof(tfdt+trun) 算出真实时长后写回.
         const patched = fixMp4Duration(mergeBuffers([init, ...frags]));
         return new Blob([patched], { type: 'video/mp4' });
     }
@@ -806,16 +806,16 @@
     }
 
     // ---------- 帧级精确截取（实验性） ----------
-    // 切片边界对齐只能精确到 ~30 秒（一个切片的长度）。要做到帧级，必须知道
+    // 切片边界对齐只能精确到 ~30 秒（一个切片的长度）. 要做到帧级，必须知道
     // 每个视频帧的 PTS，并从目标时间点之前最近的一个关键帧（IDR）开始切——
-    // 从中间帧开始切会导致花屏，因为 P/B 帧依赖前一个 GOP。
+    // 从中间帧开始切会导致花屏，因为 P/B 帧依赖前一个 GOP.
     // 实现路线：TS → PES → AnnexB，逐帧解析 slice header 的 first_mb_in_slice==0
-    // 且 nal_unit_type 为 5/7（IDR）或 I 帧，得出关键帧时间表。
+    // 且 nal_unit_type 为 5/7（IDR）或 I 帧，得出关键帧时间表.
     // 为什么标「实验性」：依赖视频编码为 H.264 且关键帧信息可从 slice header 读出，
-    // 遇到 HEVC/AV1 或 unusual 的流会失败；失败时必须能退回切片对齐。
+    // 遇到 HEVC/AV1 或 unusual 的流会失败；失败时必须能退回切片对齐.
 
-    // 从一段 TS 数据里提取关键帧的相对时间（毫秒）。
-    // 返回按时间升序的 [{ms, byteOffset}]，byteOffset 是该关键帧 IDR 在 annexB 流里的位置。
+    // 从一段 TS 数据里提取关键帧的相对时间（毫秒）.
+    // 返回按时间升序的 [{ms, byteOffset}]，byteOffset 是该关键帧 IDR 在 annexB 流里的位置.
     function findKeyframes(tsBuf, startMs) {
         // 先做 TS → PES payload 的重组（复用 1.9.0 的思路，但这里要保留时间戳）
         const frames = [];
@@ -824,8 +824,8 @@
         let pesTsStart = 0;    // 该 PES 首个 TS 包在整条流里的起点（切片要用）
         let streamLen = 0;    // 已消费的字节数
         let videoPid = -1;    // 视频流 PID（重新封装参数集时要沿用）
-        // SPS(7)/PPS(8)：每个流的参数集。切到中途时必须注入到输出开头，
-        // 否则播放器找不到解码参数，开头几帧直接花掉。
+        // SPS(7)/PPS(8)：每个流的参数集. 切到中途时必须注入到输出开头，
+        // 否则播放器找不到解码参数，开头几帧直接花掉.
         const paramSets = { sps: null, pps: null };
 
         for (let off = 0; off + 188 <= tsBuf.length; off++) {
@@ -862,8 +862,8 @@
             if (videoPid < 0 && pusi) videoPid = pid;   // 第一个 PUSI 的 PID 视为视频流
             if (pusi) {
                 if (pesBuf.length) {
-                    // 上一包 PES 结束，解析它。baseStart 是它在整条流里的起始偏移，
-                    // parsePes 把它加到关键帧位置上，得到可切片的全局字节偏移。
+                    // 上一包 PES 结束，解析它.baseStart 是它在整条流里的起始偏移，
+                    // parsePes 把它加到关键帧位置上，得到可切片的全局字节偏移.
                     parsePes(pesBuf, pcrMs, frames, baseStart, paramSets, pesTsStart);
                     pesBuf = [];
                 }
@@ -953,17 +953,17 @@
         }
     }
 
-    // 把 SPS+PTS 封成合法的 TS 包序列。
+    // 把 SPS+PTS 封成合法的 TS 包序列.
     // 为什么必须重新打包、不能直接把裸 NAL 粘到流前面：
     // 解复用器按 188 字节对齐扫包，开头多出的裸字节会让它把后面所有包的
-    // PID/continuity 判断全搞乱，症状是「non-existing PPS」+ 开头一堆帧解码失败。
-    // 正确做法是构造一个全新的、语法合法的 PES + TS 包插到输出最前面。
+    // PID/continuity 判断全搞乱，症状是「non-existing PPS」+ 开头一堆帧解码失败.
+    // 正确做法是构造一个全新的、语法合法的 PES + TS 包插到输出最前面.
     function buildParamSetTs(sps, pps, pid, pcrMs) {
         const payload = new Uint8Array(sps.length + pps.length);
         payload.set(sps, 0);
         payload.set(pps, sps.length);
         // PES 头共 9 字节（start_code 3 + stream_id 1 + pkt_len 2 + flags 2 + header_len 1），
-        // 之后是 5 字节 PTS，payload 从第 14 字节（下标 14）开始。
+        // 之后是 5 字节 PTS，payload 从第 14 字节（下标 14）开始.
         const pes = new Uint8Array(14 + payload.length);
         pes[0] = 0; pes[1] = 0; pes[2] = 1; pes[3] = 0xE0;   // 视频流
         pes[4] = 0; pes[5] = 0;                             // pkt_length = 0
@@ -997,8 +997,8 @@
     }
 
 
-    // 帧级截取的执行体。datas 是已下载的切片数组，segs 是对应元信息。
-    // 返回裁剪后的字节数组；找不到可靠切点时抛错，由调用方退回切片对齐。
+    // 帧级截取的执行体.datas 是已下载的切片数组，segs 是对应元信息.
+    // 返回裁剪后的字节数组；找不到可靠切点时抛错，由调用方退回切片对齐.
     function clipFrames(datas, segs, segStarts, fromMs, toMs) {
         // 把所有切片拼成一条 TS 流，边拼边扫关键帧，记录每片在全局的字节偏移
         const chunks = [];
@@ -1012,9 +1012,9 @@
         const kfs = findKeyframes(all, 0);
         if (kfs.length < 2) throw new Error('未能在视频流中找到足够的帧级切点 (' + kfs.length + ' 个关键帧)');
 
-        // 时间轴对齐是这里最容易出错的地方。
+        // 时间轴对齐是这里最容易出错的地方.
         // 传入的 datas 往往只是「截取区间内的切片」，不是完整回放——它的第一个
-        // 关键帧并不对应回放 0 秒。必须用切片自身的起始时间做基准：
+        // 关键帧并不对应回放 0 秒. 必须用切片自身的起始时间做基准：
         //   datas 里第 0 片的回放起始 = segStarts[0]（秒）
         //   该片第一个关键帧的 PTS = kfs[0].ms
         //   → 关键帧 k 的回放时间 = segStarts[0] + (k.ms - kfs[0].ms)/90000
@@ -1035,9 +1035,9 @@
         }
         if (endIdx < startIdx) endIdx = startIdx;
 
-        // 关键：切片必须落在 TS 包边界（0x47）上。
+        // 关键：切片必须落在 TS 包边界（0x47）上.
         // 直接按 PES 内偏移切会切出「裸流」——没有 188 字节包封装，
-        // ffprobe 能靠扫描猜出时长，但解码器找不到包边界，开头一堆帧全废。
+        // ffprobe 能靠扫描猜出时长，但解码器找不到包边界，开头一堆帧全废.
         const alignToTs = (from) => {
             let i = from;
             // 往前找最近的 0x47（最多 3 个包，因为关键帧前通常只有 SEI/AUD 包）
@@ -1049,7 +1049,7 @@
             return from;
         };
         // 用 tsStart（该关键帧所在 TS 包的起点），不是 PES 内偏移——
-        // 否则切出来的开头不是包边界，解复用器一上来就对不齐。
+        // 否则切出来的开头不是包边界，解复用器一上来就对不齐.
         let startByte = alignToTs(kfs[startIdx].tsStart || kfs[startIdx].byteOffset);
         let endByte = (endIdx + 1 < kfs.length)
             ? (kfs[endIdx + 1].tsStart || kfs[endIdx + 1].byteOffset)
@@ -1062,8 +1062,8 @@
         if (bodyLen > 0 && bodyLen !== body.length) body = body.slice(0, bodyLen);
 
         // 参数集：从中途切出来的流，开头第一个 IDR 之前没有 SPS/PPS，
-        // 播放器会报 "non-existing PPS" 然后跳过开头若干帧。
-        // 这里把 SPS/PPS 重新封装成合法 TS 包插到最前面（不能裸粘字节，会破坏对齐）。
+        // 播放器会报 "non-existing PPS" 然后跳过开头若干帧.
+        // 这里把 SPS/PPS 重新封装成合法 TS 包插到最前面（不能裸粘字节，会破坏对齐）.
         const ps = kfs.paramSets || {};
         let injected = false;
         if (ps.sps && ps.pps) {
@@ -1089,14 +1089,14 @@
     }
 
     // ---------- 面板拖拽定位（v2.4.0，纯函数便于单测） ----------
-    // 面板原本靠 CSS 的 right/bottom 固定在右下角。拖过之后改用 left/top 精确定位，
-    // 所以必须把「视口左上角坐标」换算回 right/bottom，否则窗口尺寸一变就错位。
+    // 面板原本靠 CSS 的 right/bottom 固定在右下角. 拖过之后改用 left/top 精确定位，
+    // 所以必须把「视口左上角坐标」换算回 right/bottom，否则窗口尺寸一变就错位.
     //
-    // 钳制策略是刻意不对称的：**只夹 x，不夹 y**。
+    // 钳制策略是刻意不对称的：**只夹 x，不夹 y**.
     // 面板展开后可以比视口还高（内容多时 700px+ 很正常），若把 y 也夹进视口，
-    // 面板高度超过视口时就永远只能贴在顶部、拖不下去——用户会觉得「拖不动」。
+    // 面板高度超过视口时就永远只能贴在顶部、拖不下去——用户会觉得「拖不动」.
     // 纵向可以超出视口（页面本身能滚，面板跟着滚就行），横向必须夹住，
-    // 否则面板会整个消失到屏幕外、用户找不到也拖不回来。
+    // 否则面板会整个消失到屏幕外、用户找不到也拖不回来.
     function clampPanelPos(x, y, w, h, vw, vh) {
         const gap = 8;
         const maxX = Math.max(gap, vw - w - gap);
@@ -1105,14 +1105,14 @@
             y: Math.max(gap, y),          // 只保留下边界，顶部不被裁掉
         };
     }
-    // 把 left/top 坐标钳制成可写入的定位值。
+    // 把 left/top 坐标钳制成可写入的定位值.
     //
     // v3.2.1 起**只返回 left/top**：过去还把坐标反算成 right/bottom 像素值一并写入，
     // 于是 top 和 bottom 同时存在 —— CSS 对「height:auto + top + bottom」会把高度钉成
     // 「视口高 − top − bottom」，悬浮收起态实测 shell 高 570px 而内容只有 48px，
-    // 一块看不见的大壳子盖住右下角、把点击全吃掉。改成只锚定 left/top 后，
+    // 一块看不见的大壳子盖住右下角、把点击全吃掉. 改成只锚定 left/top 后，
     // shell 高度始终等于内容高度；窗口缩放仍由 resize 里按 lastPos 重跑 applyPos
-    // 兜住（v3.0.3 的钳制逻辑不变，只夹 x 不夹 y 的策略也不变）。
+    // 兜住（v3.0.3 的钳制逻辑不变，只夹 x 不夹 y 的策略也不变）.
     function posToRightBottom(x, y, w, h, vw, vh) {
         const c = clampPanelPos(x, y, w, h, vw, vh);
         return {
@@ -1123,13 +1123,13 @@
 
     // ---------- 悬浮态不再限高（v3.6.2） ----------
     // .body 的 max-height 原本是 docked/悬浮共用的写死值 calc(100vh - 140px)：
-    // 悬浮展开时内容一超出就冒滚动条，面板被拖到靠下时最明显，可滚区只剩百来像素。
+    // 悬浮展开时内容一超出就冒滚动条，面板被拖到靠下时最明显，可滚区只剩百来像素.
     // 这里按面板在视口里的实际位置算出「还能往下长多少」，用 CSS 变量
-    // --dlr-float-max-h 覆盖那个写死值；内嵌态摘掉变量、交还 CSS 默认，不碰 dock 高度。
-    // panel 与 innerH 走参数而不是闭包变量：抽取器按函数名切源码，单测要能独立调用。
+    // --dlr-float-max-h 覆盖那个写死值；内嵌态摘掉变量、交还 CSS 默认，不碰 dock 高度.
+    // panel 与 innerH 走参数而不是闭包变量：抽取器按函数名切源码，单测要能独立调用.
     function syncFloatMaxH(panel, innerH) {
         // 内嵌态不参与：dock 的高度由 --dlr-dock-h 系列管，变量必须摘掉，
-        // 否则悬浮时算出的上限会跟着一起内嵌进去（v3.6.1 刚修好的内嵌高度又会跑偏）。
+        // 否则悬浮时算出的上限会跟着一起内嵌进去（v3.6.1 刚修好的内嵌高度又会跑偏）.
         if (panel.classList.contains('docked')) {
             panel.style.removeProperty('--dlr-float-max-h');
             return;
@@ -1137,24 +1137,24 @@
         const r = panel.getBoundingClientRect();
         if (!r.height) return;            // 还没入 DOM，量到的全是 0
         const body = panel.querySelector('.body');
-            // .body 之外那部分固定占用（展开条/头部/底栏/内边距）。它和 .body 的高度无关，
-            // 所以展开动画途中算出来的值也是准的 —— .body 变高不会反过来改变 chrome。
-            // 查不到 .body（模板被改坏）时记 0，别把整个面板高度都当成固定占用。
+            // .body 之外那部分固定占用（展开条/头部/底栏/内边距）. 它和 .body 的高度无关，
+            // 所以展开动画途中算出来的值也是准的 —— .body 变高不会反过来改变 chrome.
+            // 查不到 .body（模板被改坏）时记 0，别把整个面板高度都当成固定占用.
             const chrome = body ? Math.max(0, r.height - body.getBoundingClientRect().height) : 0;
             // 面板是 fixed 且锚在视口内，r.top 就是它到视口顶的距离；
-            // .body 往下最多长到视口底留 16px（与 CSS 默认页边距一致）。
-            // top 夹到 0：面板被拖出视口上沿时不算出比视口还高的上限。
+            // .body 往下最多长到视口底留 16px（与 CSS 默认页边距一致）.
+            // top 夹到 0：面板被拖出视口上沿时不算出比视口还高的上限.
             const cap = Math.max(120, (innerH || window.innerHeight) - Math.max(0, r.top) - chrome - 16);
         panel.style.setProperty('--dlr-float-max-h', Math.round(cap) + 'px');
     }
 
     // ---------- 截取时间输入的单位上限（v2.3.0） ----------
-    // 用户不该先猜「这场回放有多长」再决定填 mm:ss 还是 hh:mm:ss。
+    // 用户不该先猜「这场回放有多长」再决定填 mm:ss 还是 hh:mm:ss.
     // 这里按已解析出的回放总时长推出「上限形态」：
     //   总时长 ≥ 1 小时  → hh:mm:ss（三段，小时位不限 99，可到 100:00:00）
     //   总时长 <  1 小时 → mm:ss（两段，分钟位可超 59，如 90:00）
-    //   回放还没解析出来 → 不预设上限，只把已填内容规范化（补零、去掉多余冒号）。
-    // 纯函数，不碰 DOM，便于单测；返回 {unit, text}。
+    //   回放还没解析出来 → 不预设上限，只把已填内容规范化（补零、去掉多余冒号）.
+    // 纯函数，不碰 DOM，便于单测；返回 {unit, text}.
     function clipTimeHint(totalDurSec) {
         const dur = Number(totalDurSec);
         const has = isFinite(dur) && dur > 0;
@@ -1162,12 +1162,12 @@
         return { unit: unit, capHint: has ? fmtTime(dur) : null };
     }
 
-    // 把用户输入规范化成「上限形态」的文本：补零到两位、去掉多余的冒号层数。
-    // 只做无损变换，不改变时刻本身；非法输入原样返回，交给 parseTimeArg 报错。
+    // 把用户输入规范化成「上限形态」的文本：补零到两位、去掉多余的冒号层数.
+    // 只做无损变换，不改变时刻本身；非法输入原样返回，交给 parseTimeArg 报错.
     // 零宽字符用码点数值过滤而不是往正则里塞不可见字面量——编辑工具会在改写时
-    // 悄悄吃掉其中一个（U+200B 就这么丢过一次），写死码点不会被文本层改写影响。
+    // 悄悄吃掉其中一个（U+200B 就这么丢过一次），写死码点不会被文本层改写影响.
     // 码点表内联在函数里：单测抽取器只抽函数体、不抽外层 const，
-    // 放外面会变成 ReferenceError。
+    // 放外面会变成 ReferenceError.
     function stripClipNoise(s) {
         return String(s).split('').filter((ch) => {
             const c = ch.codePointAt(0);
@@ -1189,16 +1189,16 @@
         const n = p.map((x) => parseInt(x, 10));
         const pad = (x) => String(x).padStart(2, '0');
         if (unit === 'hh:mm:ss') {
-            // 只在「已经是三段」时规范化。两段（1:30）含义歧义——既可能读成
+            // 只在「已经是三段」时规范化. 两段（1:30）含义歧义——既可能读成
             // 1分30秒，也可能读成 1小时30分——所以原样交给 parseTimeArg 按
-            // 既定规则（两段=mm:ss）解析，绝不在这里替用户猜。
+            // 既定规则（两段=mm:ss）解析，绝不在这里替用户猜.
             if (n.length !== 3) return s;
             return pad(n[0]) + ':' + pad(n[1]) + ':' + pad(n[2]);
         }
-        // mm:ss：两段时首位是分钟不补零（90:00 保持原样），秒位补零。
+        // mm:ss：两段时首位是分钟不补零（90:00 保持原样），秒位补零.
         // 裸数字补零成两位；其余层数（3 段、4 段…）原样返回——
         // 早先写成无条件 pad(n[0]) 会把 '1:2:3' 静默截断成 '01'，
-        // 用户输入被篡改且毫无提示，这个 bug 是浏览器验收抓出来的，单测没覆盖到。
+        // 用户输入被篡改且毫无提示，这个 bug 是浏览器验收抓出来的，单测没覆盖到.
         if (n.length === 2) return n[0] + ':' + pad(n[1]);
         if (n.length === 1) return pad(n[0]);
         return s;
@@ -1267,19 +1267,19 @@
 
     // ---------- 导出 .m3u8 播放列表 ----------
     // 用途：把当前选中的这一路（原始/指定分辨率）导出成标准 m3u8，
-    // 便于用 VLC / ffmpeg / 另一个下载器重新拉取，或存档。
+    // 便于用 VLC / ffmpeg / 另一个下载器重新拉取，或存档.
     // 只导出当前 clips 对应的媒体清单，不含 master 的多码率分支——
-    // 因为切片已被选定，再嵌多码率反而会让别的播放器重新选一次。
+    // 因为切片已被选定，再嵌多码率反而会让别的播放器重新选一次.
     // ---------- 聊天记录导出（v3.5.0, 实验性） ----------
     // 接口实测结论（2026-10-05 登录态, 浏览器内带完整 cookie 真实请求）:
     //   GET https://lv.dingtalk.com/live/listComment
     //       ?roomId=…&liveUuid=…&loadMoreId=（必填, 可空串）&sortType=（必填整数）&size=…
     //   → 参数齐了返回 200, 但 body 是 {"success":false,"errorCode":"19004",
     //     "errorMsg":"游客身份失效，请尝试刷新页面"} —— 即使浏览器里已登录、csrf/XSRF 齐全、
-    //     cookie 带上也一样。所以这个接口不接受「网页登录态」这一种身份, 我们如实报错,
-    //     不伪造任何聊天内容。签名是对探出来的: POST 是 405, 缺 sortType/loadMoreId 各 400。
+    //     cookie 带上也一样. 所以这个接口不接受「网页登录态」这一种身份, 我们如实报错,
+    //     不伪造任何聊天内容. 签名是对探出来的: POST 是 405, 缺 sortType/loadMoreId 各 400.
     const CHAT_PAGE_SIZE = 50;
-    // 把一条评论摊平成稳定字段顺序 —— 各格式共用同一份规范化结果, 避免四套解析各写一遍。
+    // 把一条评论摊平成稳定字段顺序 —— 各格式共用同一份规范化结果, 避免四套解析各写一遍.
     function chatNormalize(raw) {
         const pick = (o, keys) => {
             for (let i = 0; i < keys.length; i++) {
@@ -1355,7 +1355,7 @@
             '<table><thead><tr><th>时间</th><th>用户</th><th>内容</th></tr></thead><tbody>' +
             rows + '</tbody></table></body></html>';
     }
-    // 格式名 → {ext, mime, render}。UI 与保存共用这一张表, 不在两处各写一遍。
+    // 格式名 → {ext, mime, render}.UI 与保存共用这一张表, 不在两处各写一遍.
     function chatFormat(name, list, meta) {
         const table = {
             txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', render: chatToTxt },
@@ -1405,13 +1405,13 @@
 
     // ---------- 分辨率：自定义输入与常用档位 ----------
     // 播放列表里的档位常常缺（单码率回放只有一个自动项），但用户仍可能想
-    // 「按更低的分辨率下」——于是允许手填 WxH。填了之后按「不超过原始分辨率、
-    // 尽量接近」的原则选最接近的档位；没有匹配就明确告知并回落自动。
+    // 「按更低的分辨率下」——于是允许手填 WxH. 填了之后按「不超过原始分辨率、
+    // 尽量接近」的原则选最接近的档位；没有匹配就明确告知并回落自动.
     const CUSTOM_RES = '__custom__';   // 下拉里的哨兵值
     // 接受 1920x1080 / 1920X1080 / 1920×1080 / 空格 / 中文冒号
     function parseResInput(v) {
         // 归一化各种手打分隔符：中文/全角冒号（有人会打「1280：720」）、
-        // 乘号、大写 X、全角 x、空格与零宽字符 —— 统一成半角 x。
+        // 乘号、大写 X、全角 x、空格与零宽字符 —— 统一成半角 x.
         const t = String(v == null ? '' : v)
             .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))  // 全角数字
             .replace(/[×╳✕]/g, 'x')
@@ -1502,9 +1502,9 @@
     }
 
     // ---------- UI ----------
-    // 样式注入双保险：优先 GM_addStyle，失败则退回原生 <style>。
+    // 样式注入双保险：优先 GM_addStyle，失败则退回原生 <style>.
     // Tampermonkey 沙箱里 GM_addStyle 偶发失效（样式整段丢失且不报错），
-    // 那样折叠区既无高度又 opacity:0 —— 表现为「打开更多设置什么都没有」。
+    // 那样折叠区既无高度又 opacity:0 —— 表现为「打开更多设置什么都没有」.
     (function injectStyle(cssText) {
         let done = false;
         try { if (typeof GM_addStyle === 'function') { GM_addStyle(cssText); done = true; } }
@@ -1527,11 +1527,11 @@
             transition:width 280ms cubic-bezier(0.16,1,0.3,1),
                 padding 280ms cubic-bezier(0.16,1,0.3,1),
                 border-radius 280ms cubic-bezier(0.16,1,0.3,1)}
-        /* 下载中：整个面板最外层一圈流动的渐变光带。
+        /* 下载中：整个面板最外层一圈流动的渐变光带.
            用 SVG 圆角矩形路径 + stroke-dash 动画，而不是旋转 border——
-           非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转。
+           非正方形元素旋转会翻转（看起来抖、假），SVG dash 沿路径流动不翻转.
            颜色与 3s 慢速取自参考站 web-motion-showcase 的 Border Beam：
-           conic 渐变 transparent→蓝→#38bdf8→#ec4899，3s linear infinite。 */
+           conic 渐变 transparent→蓝→#38bdf8→#ec4899，3s linear infinite. */
         #dlr-ring{position:fixed;pointer-events:none;z-index:1000000;overflow:visible;
             opacity:0;transition:opacity 400ms ease-out}
         #dlr-ring.on{opacity:1}
@@ -1541,7 +1541,7 @@
             animation:dlrRingDash 3s linear infinite}
         /* 偏移量用 CSS 变量：JS 按真实周长写入 --ring-perim，
            动画整周期正好走完一圈，不会像写死 -400 那样在高周长面板上
-           看起来「走得很快」或「几乎不动」。 */
+           看起来「走得很快」或「几乎不动」. */
         @keyframes dlrRingDash{from{stroke-dashoffset:0}to{stroke-dashoffset:calc(-1 * var(--ring-perim, 900px))}}
         #dlr-panel .body{display:grid;grid-template-rows:1fr;position:relative;z-index:1;width:100%;overflow:hidden;
             background:#16181d;color:#d7d9de;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
@@ -1563,16 +1563,16 @@
         #dlr-panel .bin::-webkit-scrollbar{width:6px}
         #dlr-panel .bin::-webkit-scrollbar-thumb{background:#3a3f4b;border-radius:3px}
         #dlr-panel .bin::-webkit-scrollbar-track{background:transparent}
-        /* 拖拽把手（v2.4.0）：标题区整块可拖，光标变 move 表示可拖。
-           user-select:none 是关键——否则拖动会顺带选中标题文字，手感很脏。
-           touch-action:none 让触屏/触控笔也能拖，而不是触发页面滚动。 */
+        /* 拖拽把手（v2.4.0）：标题区整块可拖，光标变 move 表示可拖.
+           user-select:none 是关键——否则拖动会顺带选中标题文字，手感很脏.
+           touch-action:none 让触屏/触控笔也能拖，而不是触发页面滚动. */
         #dlr-panel .drag{cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}
         #dlr-panel .drag:active{cursor:grabbing}
         /* 拖动中：禁掉过渡，否则 width/left 一起动画会粘滞 lagging 手感 */
         #dlr-panel.dragging{transition:none!important}
         #dlr-panel.dragging .drag{cursor:grabbing}
         /* 「点这里打开帧级截取」的跳转高亮：只在用户点过来时闪一下，
-           不用持续动画——面板常驻视线内，闪一下足够指路，不必一直晃。 */
+           不用持续动画——面板常驻视线内，闪一下足够指路，不必一直晃. */
         #dlr-panel .chk.flash{animation:dlrFlash 1.1s ease-out 2}
         @keyframes dlrFlash{0%,100%{background:transparent}
             40%{background:rgba(61,110,255,.32);border-radius:5px}}
@@ -1601,13 +1601,13 @@
         #dlr-panel button.primary{background:#3d6eff;border-color:#3d6eff;color:#fff;font-size:13px;font-weight:600;
             padding:8px 16px;width:100%;border-radius:8px}
         #dlr-panel button.primary:hover{background:#2f5fd8}
-        /* 进度条高度由内容决定，不用固定 22px。
+        /* 进度条高度由内容决定，不用固定 22px.
            原来 height:22px + overflow:hidden，而 .pct 是 height:100% 的居中单行：
            标签一长（切片数 · 体积 · 速度 · 剩余时间 · 已暂停）就折成两行，文字块 34px
            高于 22px 的框，下半行被裁掉（实测 clippedBy 14px，只剩上半行可见，
-           看起来像「进度条变细了」）。
+           看起来像「进度条变细了」）.
            现 min-height:22px 保住单行时的原样，height:auto 让它按内容长高；
-           .bar / .stripes 用 inset:0 自动跟随新高度。 */
+           .bar / .stripes 用 inset:0 自动跟随新高度. */
         #dlr-progress{position:relative;min-height:22px;height:auto;margin-top:10px;
             background:#0f1115;border:1px solid #23262e;
             border-radius:11px;overflow:hidden;display:none}
@@ -1615,8 +1615,8 @@
         #dlr-progress .bar{position:absolute;left:0;top:0;bottom:0;width:0%;background:#3d6eff;transition:width .25s ease}
         #dlr-progress .stripes{position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(255,255,255,.16) 0 8px,transparent 8px 16px);background-size:32px 32px;animation:dlrSlide .6s linear infinite;pointer-events:none}
         /* 居中靠 padding + line-height，不用 height:100% + align-items：
-           后者在多行时会把文字块按盒子高度居中，末行仍可能被裁。
-           line-height:1.35 让两行时的行距不挤。 */
+           后者在多行时会把文字块按盒子高度居中，末行仍可能被裁.
+           line-height:1.35 让两行时的行距不挤. */
         #dlr-progress .pct{position:relative;display:flex;align-items:center;justify-content:center;
             padding:2px 8px;min-height:20px;box-sizing:border-box;
             font-size:12px;line-height:1.35;color:#fff;font-weight:600;
@@ -1678,8 +1678,8 @@
         #dlr-panel.docked .more-toggle{font-size:11px;padding:1px 0}
         /* 队列框 (粘贴链接那个框) 的文字必须始终读得完 —— 它是固定高度输入框,
            不随面板被压小; min-height 让用户自己 resize:vertical 也拖不到更小,
-           overflow-y:auto 让多行链接滚动显示而不是被静默裁掉。
-           实测: 20px 高时 scrollHeight 48 > clientHeight 19 (文字被藏)。 */
+           overflow-y:auto 让多行链接滚动显示而不是被静默裁掉.
+           实测: 20px 高时 scrollHeight 48 > clientHeight 19 (文字被藏). */
         #dlr-panel.docked #dlr-queue{height:42px;min-height:42px;line-height:18px;
             padding:2px 5px;overflow-y:auto}
         /* aria2 区块实测占 172px (更多设置 373px 里最大的一块), 说明文字就吃掉 39px.
@@ -1692,18 +1692,18 @@
         #dlr-panel.docked #dlr-aria2-state{font-size:10px;min-height:12px;margin-top:1px}
         #dlr-panel.docked label{min-width:56px;font-size:11px}
         /* ---------- 内嵌态可拉伸高度 (v3.4.0) ----------
-           页签条下可用空间实测 581px (侧栏列 632 - 页签条 50), 面板默认 430px。
-           底边把手拖动改高度, 由 --dlr-dock-h 表达; JS 只负责夹进 [下限, 可用空间]。
+           页签条下可用空间实测 581px (侧栏列 632 - 页签条 50), 面板默认 430px.
+           底边把手拖动改高度, 由 --dlr-dock-h 表达; JS 只负责夹进 [下限, 可用空间].
            收起态 (.mini) 完全绕开: .body 此时是 grid-template-rows:0fr + opacity:0,
-           高度本就为 0, 所以收起时 height:auto、把手隐藏, 不留任何能顶开它的约束。
+           高度本就为 0, 所以收起时 height:auto、把手隐藏, 不留任何能顶开它的约束.
 
            「不能缩小到看不见文字」这条**只约束队列框自身**, 不是约束整个面板:
            面板变矮时 .bin 照常滚动, 而队列框是固定高度输入框, 它的文字必须始终可读
-           —— 见下面 #dlr-queue 的 min-height。 */
+           —— 见下面 #dlr-queue 的 min-height. */
         #dlr-panel.docked .body{height:var(--dlr-dock-h, 430px);max-height:none;min-height:0}
         /* .bin 只做滚动, 不加 min-height: min-height 加在滚动容器上既不能保证
            文字可见 (可见性由元素自身高度决定), 又会和 .body 的固定高度打架 ——
-           收起态 0fr 被顶开后面板实测高达 629px、直接吃满整条侧栏。 */
+           收起态 0fr 被顶开后面板实测高达 629px、直接吃满整条侧栏. */
         #dlr-panel.docked .bin{max-height:none}
         #dlr-panel.docked.mini .body{height:auto;max-height:none;min-height:0}
         #dlr-dock-resize{position:absolute;left:0;right:0;top:0;height:10px;
@@ -1718,12 +1718,12 @@
         /* 内嵌态隐藏滚动条外观 (v3.6.1): .bin/.body 上的 scrollbar-width:thin 是标准属性,
            Chromium 见到它就忽略同规则的 ::-webkit-scrollbar 深色定制, 渲染回浏览器默认
            白底滚动条 (白轨+灰滑块, 与深色面板割裂; 截图实测滑块比例 319/540 反推内容
-           ≈915px, 正是 .bin 更多设置全开的 937px)。只藏外观 —— 滚轮/触摸板/键盘滚动
-           全部保留; 悬浮态不受影响。 */
+           ≈915px, 正是 .bin 更多设置全开的 937px). 只藏外观 —— 滚轮/触摸板/键盘滚动
+           全部保留; 悬浮态不受影响. */
         #dlr-panel.docked .bin,#dlr-panel.docked .body{scrollbar-width:none;-ms-overflow-style:none}
         #dlr-panel.docked .bin::-webkit-scrollbar,#dlr-panel.docked .body::-webkit-scrollbar{width:0;height:0;display:none}
         /* 兜底: 面板撑高把钉钉侧栏列弄溢出时, 列自己也会冒原生滚动条 —— JS 在 dock 时
-           向上探测第一个真正在滚的祖先打 data-dlr-nosb, undock 时摘除。 */
+           向上探测第一个真正在滚的祖先打 data-dlr-nosb, undock 时摘除. */
         [data-dlr-nosb]{scrollbar-width:none;-ms-overflow-style:none}
         [data-dlr-nosb]::-webkit-scrollbar{width:0;height:0;display:none}
         #dlr-panel.docked.mini .body{width:100%}
@@ -1758,15 +1758,15 @@
             transition:height 260ms cubic-bezier(0.16,1,0.3,1),
                 opacity 200ms cubic-bezier(0.4,0,0.2,1)}
         #dlr-panel .more-body>div{min-height:0}
-        /* 展开态只改透明度，高度一律交给 JS 内联写。
+        /* 展开态只改透明度，高度一律交给 JS 内联写.
            绝不能在这里写 height:auto —— 收起态靠 height:0 折叠，
-           展开态若改成 auto，两者语义冲突，下方元素会被顶到错误位置。 */
+           展开态若改成 auto，两者语义冲突，下方元素会被顶到错误位置. */
         #dlr-panel .more-body.open{opacity:1}
         #dlr-panel .more-body .row:first-child{margin-top:6px}
         /* ---------- 视口自适应（v2.6.1） ----------
-           全部展开时面板可能比窗口还高（笔记本视口常只有 700~900px）。
+           全部展开时面板可能比窗口还高（笔记本视口常只有 700~900px）.
            用 max-height 限制 .body 高度并让它内部滚动，面板永远不会超出视口；
-           收起态不受影响（高度由内容决定，max-height 只是上限）。 */
+           收起态不受影响（高度由内容决定，max-height 只是上限）. */
         #dlr-panel .body{max-height:var(--dlr-float-max-h,calc(100vh - 140px));overflow-y:auto;overflow-x:hidden;
             scrollbar-width:thin}
         #dlr-panel .body::-webkit-scrollbar{width:6px}
@@ -1774,9 +1774,9 @@
         #dlr-panel .body::-webkit-scrollbar-track{background:transparent}
         /* 紧凑排版（v2.6.1）：全部展开也不能超出视口 ----------
            原来每个区块都叠 margin-top:8 + padding-top:8 + row margin:6，输入框 34px 高，
-           全部展开后面板高达 1178px —— 而常见笔记本视口只有 700~900px，必然溢出。
-           这里统一收紧间距与控件高度，不改结构、不动逻辑。
-           实测：1178px → 约 760px（约 -35%）。 */
+           全部展开后面板高达 1178px —— 而常见笔记本视口只有 700~900px，必然溢出.
+           这里统一收紧间距与控件高度，不改结构、不动逻辑.
+           实测：1178px → 约 760px（约 -35%）. */
         #dlr-panel .sec{padding-top:5px;margin-top:5px}
         #dlr-panel .row{margin:3px 0;gap:5px}
         #dlr-panel .tip{margin-top:2px;font-size:10.5px;line-height:1.35}
@@ -1789,9 +1789,9 @@
         /* 更多设置内部再紧一档 */
         #dlr-panel .more-body .mrow{margin-top:4px}
         #dlr-panel .more-body .grid2{margin-top:4px;gap:1px 8px}
-        /* 紧凑排版（v2.6.0）：数字/下拉两两并排，开关类选项排成两列网格。
+        /* 紧凑排版（v2.6.0）：数字/下拉两两并排，开关类选项排成两列网格.
            用户要求「两个选项放同一行的左右两边」——原来每项独占一行，
-           十来个开关要滚很久。 */
+           十来个开关要滚很久. */
         #dlr-panel .mrow{display:flex;gap:8px;margin-top:6px}
         #dlr-panel .mrow>.row{flex:1;min-width:0;margin-top:0}
         #dlr-panel .mrow>.row>label{flex:0 0 auto;white-space:nowrap}
@@ -1814,10 +1814,10 @@
             backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
         #dlr-panel.mini .collapse{opacity:0}
         /* 展开态：默认隐藏收缩条 */
-        /* 收起横条。display:none ↔ flex 是瞬间切换、无法过渡，和 body 的
-           280ms 高度收缩不同步——收起时会看到横条「啪」地闪出来。
+        /* 收起横条.display:none ↔ flex 是瞬间切换、无法过渡，和 body 的
+           280ms 高度收缩不同步——收起时会看到横条「啪」地闪出来.
            改成 grid-template-rows:0fr→1fr + opacity，与 body 用同一条曲线，
-           两边同时开始、同时结束（v2.6.0 修复收起动画错位）。 */
+           两边同时开始、同时结束（v2.6.0 修复收起动画错位）. */
         #dlr-panel .expand{height:0;overflow:hidden;opacity:0;
             cursor:pointer;padding:0 12px;color:#d7d9de;font-size:12px;
             background:rgba(22,24,29,.92);border-radius:12px;
@@ -1884,7 +1884,7 @@
             #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
             #dlr-ring .ring-beam{animation:none !important}
         }
-        /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边。不透明时无模糊开销 */
+        /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边. 不透明时无模糊开销 */
         #dlr-panel.frost .body{background:rgba(22,24,29,.72);border-color:rgba(255,255,255,.09);
             box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07)}
         #dlr-panel.frost input[type=text],#dlr-panel.frost input[type=number],
@@ -1898,7 +1898,7 @@
     panel.id = 'dlr-panel';
     panel.className = 'wrap';
     // 注意：不要给 panel 设 position:relative 内联样式——会覆盖 CSS 的 position:fixed，
-    // 导致面板掉进文档流（跑到页面左下角）。position:fixed 本身已足以作为收缩按钮的定位参照。
+    // 导致面板掉进文档流（跑到页面左下角）.position:fixed 本身已足以作为收缩按钮的定位参照.
     panel.innerHTML = `
         <div class="expand drag" id="dlr-exp" title="点击展开面板, 按住拖动可移动">
             <div class="ex-inner">
@@ -2050,17 +2050,17 @@
     }
 
     // ---------- aria2 推送 (v3.3.0, 实验性) ----------
-    // 前三个是纯函数 (无 IO), 可直接单测; 真正发 RPC 的 aria2Call 只做一次 POST。
+    // 前三个是纯函数 (无 IO), 可直接单测; 真正发 RPC 的 aria2Call 只做一次 POST.
 
-    // 切片落盘名: 用序号补零到 5 位, 保证 aria2 下载完能按顺序 concat。
-    // sequence 缺失时退回下标 +1 —— 两者都是整数, 不能出现 seg2.ts 排在 seg10.ts 前面。
+    // 切片落盘名: 用序号补零到 5 位, 保证 aria2 下载完能按顺序 concat.
+    // sequence 缺失时退回下标 +1 —— 两者都是整数, 不能出现 seg2.ts 排在 seg10.ts 前面.
     function aria2SegName(seg, index) {
         const raw = (seg && seg.sequence !== undefined && seg.sequence !== null && isFinite(seg.sequence))
             ? seg.sequence : (index + 1);
         return 'seg' + String(Math.max(0, Math.round(raw))).padStart(5, '0') + '.ts';
     }
-    // 单个 addUri 的 options。header 必须是字符串数组 (aria2 原样附加到 HTTP 请求头),
-    // 实测 Referer / User-Agent / Cookie 都能透传; 钉钉切片不需要 Cookie。
+    // 单个 addUri 的 options.header 必须是字符串数组 (aria2 原样附加到 HTTP 请求头),
+    // 实测 Referer / User-Agent / Cookie 都能透传; 钉钉切片不需要 Cookie.
     function aria2Options(out, dir, headers, extra) {
         const o = {};
         if (out) o.out = out;
@@ -2069,8 +2069,8 @@
         if (extra) { for (const k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k]; } }
         return o;
     }
-    // 组装一批 addUri 的请求体。分片太多时一次请求塞不下 (实测几百条尚可, 上千条要分批),
-    // 所以按 caller 传入的批大小切分 —— 这里只负责把一批拼成 JSON-RPC 结构。
+    // 组装一批 addUri 的请求体. 分片太多时一次请求塞不下 (实测几百条尚可, 上千条要分批),
+    // 所以按 caller 传入的批大小切分 —— 这里只负责把一批拼成 JSON-RPC 结构.
     function aria2BuildBatch(gids, items, secret) {
         const calls = items.map((it) => {
             const params = [];
@@ -2081,8 +2081,8 @@
         });
         return { jsonrpc: '2.0', id: 'dlr-' + (gids || ''), method: 'system.multicall', params: [calls] };
     }
-    // RPC 错误 → 人话。aria2 的错误码实测只有 1(Unauthorized) 等少数几个,
-    // 更多情况要靠 message 文本判断, 所以两条路都给。
+    // RPC 错误 → 人话.aria2 的错误码实测只有 1(Unauthorized) 等少数几个,
+    // 更多情况要靠 message 文本判断, 所以两条路都给.
     function aria2Explain(msg) {
         const m = String(msg || '');
         if (/Unauthorized/i.test(m)) return '密钥不对 (aria2 报 Unauthorized) — 请核对 --rpc-secret';
@@ -2092,8 +2092,8 @@
         return m;
     }
     // ---------- aria2 RPC 传输层 (v3.3.0, 实验性) ----------
-    // 只发 POST 到 /jsonrpc (实测 GET 一律 Invalid Request)。gmx 会把非 2xx 当失败抛错,
-    // 这里不用它 —— RPC 的错误在 200 的 JSON body 里 (error.code/message), 走 gmx 会丢上下文。
+    // 只发 POST 到 /jsonrpc (实测 GET 一律 Invalid Request).gmx 会把非 2xx 当失败抛错,
+    // 这里不用它 —— RPC 的错误在 200 的 JSON body 里 (error.code/message), 走 gmx 会丢上下文.
     function aria2Rpc(cfg, payload, timeout) {
         const url = 'http://' + cfg.host + ':' + cfg.port + '/jsonrpc';
         return new Promise((resolve, reject) => {
@@ -2124,9 +2124,9 @@
             });
         });
     }
-    // 一次 POST 最多塞多少条切片: 单条 addUri 请求体约 300 字节, 留足余量。
+    // 一次 POST 最多塞多少条切片: 单条 addUri 请求体约 300 字节, 留足余量.
     const ARIA2_BATCH = 40;
-    // 把解析出的切片列表切成一批批 addUri 参数。切片顺序即 m3u8 顺序, 不能重排。
+    // 把解析出的切片列表切成一批批 addUri 参数. 切片顺序即 m3u8 顺序, 不能重排.
     function aria2Plan(segments, dir, referer, ua) {
         const headers = [];
         if (referer) headers.push('Referer: ' + referer);
@@ -2148,7 +2148,7 @@
 
     // aria2 配置的**唯一读取入口**, 必须在模块级: init() 里的 arConfig 是局部 const,
     // run() 看不到它 —— 早先一版在 run() 里判 `typeof arConfig === 'function'` 永远为假,
-    // 于是开启总开关后每次下载都报「aria2 配置尚未初始化」(浏览器验收抓出的真 bug)。
+    // 于是开启总开关后每次下载都报「aria2 配置尚未初始化」(浏览器验收抓出的真 bug).
     function aria2Config() {
         const g = (id) => { try { return document.getElementById(id); } catch (e) { return null; } };
         const host = g('dlr-aria2-host'), port = g('dlr-aria2-port');
@@ -2160,15 +2160,15 @@
             dir: (dir && dir.value.trim()) || '',
         };
     }
-    // 总开关状态也放模块级, run() 与面板 UI 共用同一个标志。
+    // 总开关状态也放模块级, run() 与面板 UI 共用同一个标志.
     window.__aria2Enabled = false;
     try { window.__aria2Enabled = !!GM_getValue('dlr_aria2_on', false); } catch (e) { }
 
 
-    // 把一批切片推给 aria2 并汇报结果。返回 {ok, total, failed, firstErr}。
-    // 「发送到 aria2」按钮与「下载交给 aria2」总开关共用这一条路径, 不复制逻辑。
+    // 把一批切片推给 aria2 并汇报结果. 返回 {ok, total, failed, firstErr}.
+    // 「发送到 aria2」按钮与「下载交给 aria2」总开关共用这一条路径, 不复制逻辑.
     // opts: {segments, encrypted, fmp4, dir, referer, ua, secret, label}
-    // 返回 {skipped:true, reason} 表示这条路 aria2 根本做不了 (加密/fMP4/空列表)。
+    // 返回 {skipped:true, reason} 表示这条路 aria2 根本做不了 (加密/fMP4/空列表).
     async function aria2PushAll(opts) {
         const segs = opts.segments || [];
         if (!segs.length) return { skipped: true, reason: '切片列表为空' };
@@ -2257,22 +2257,22 @@
     }
 
     // ---------- 下载控制：暂停 / 继续 / 中断 / 删除已下载 ----------
-    // DL 跨 run 存活；partial 保存已下载切片实现「中断再下 = 断点续传」。
+    // DL 跨 run 存活；partial 保存已下载切片实现「中断再下 = 断点续传」.
     // partial.failed 记录上次失败的片号与原因，用于「只重试失败切片」的提示文案
-    // 与「换更低并发重试」建议——好片永远留在 datas 里，不会被重复下载。
+    // 与「换更低并发重试」建议——好片永远留在 datas 里，不会被重复下载.
     const DL = { pause: false, cancel: false, running: false, purge: false };
     let partial = null;   // {key, datas} —— 中断时保留，purge 时清空
 
     // ---------- 解析阶段后台预下载（v2.7.0） ----------
     // 打开页面 → prefetch 解析出切片列表时就开始静默拉片，用户点「下载」时
-    // 只需合并保存，把「等切片」这一段等待前置到浏览页面的时间里。
+    // 只需合并保存，把「等切片」这一段等待前置到浏览页面的时间里.
     //
     // 为什么单独存一份而不复用 partial：
     //   partial 的 key 含截取区间(roomId|liveUuid|res|from-to)，而预下载发生在
-    //   用户还没设截取时，两者 key 必然不同，复用等于永远命不中。而且 IndexedDB
+    //   用户还没设截取时，两者 key 必然不同，复用等于永远命不中. 而且 IndexedDB
     //   只有单槽，若预下载去写它，会和用户正式下载的断点缓存抢槽——用户中途
-    //   「删除已下载」时就得连带清掉预下载。所以预下载只放内存、不落盘：
-    //   刷新页面即丢弃，语义清晰，也不会产生「删不掉」的幽灵缓存。
+    //   「删除已下载」时就得连带清掉预下载. 所以预下载只放内存、不落盘：
+    //   刷新页面即丢弃，语义清晰，也不会产生「删不掉」的幽灵缓存.
     const pre = {
         key: null,        // roomId|liveUuid|res
         datas: null,      // 与 parsed.segments 一一对应，未完成处为 null
@@ -2302,16 +2302,16 @@
         }
         return { datas: out, count: n, bytes };
     };
-    // 上次失败的片号（1-based）。为 null 表示没有待重试的失败片，按钮隐藏。
-    // 成功/换 key/删除缓存时清空——避免拿上一轮的数字误导用户。
+    // 上次失败的片号（1-based）. 为 null 表示没有待重试的失败片，按钮隐藏.
+    // 成功/换 key/删除缓存时清空——避免拿上一轮的数字误导用户.
     let lastFailed = null;
 
-    // 截取输入的单位上限跟随回放总时长（v2.3.0）。prep() 与 init() 是兄弟函数，
-    // 作用域不通，所以用模块级钩子把「总时长已知」这件事传出去。
+    // 截取输入的单位上限跟随回放总时长（v2.3.0）.prep() 与 init() 是兄弟函数，
+    // 作用域不通，所以用模块级钩子把「总时长已知」这件事传出去.
     let onClipDur = null;
 
-    // 拖拽状态。放模块级是因为 setMini/横条 click 的绑定早于拖拽代码所在位置，
-    // 放局部会撞 TDZ（虽然回调延迟执行时侥幸不报错，但依赖初始化顺序很脆弱）。
+    // 拖拽状态. 放模块级是因为 setMini/横条 click 的绑定早于拖拽代码所在位置，
+    // 放局部会撞 TDZ（虽然回调延迟执行时侥幸不报错，但依赖初始化顺序很脆弱）.
     let dragging = false, dragOffX = 0, dragOffY = 0;
     let dragStartX = 0, dragStartY = 0, dragPending = false;
     let moved = false;                 // 本轮是否真的越过阈值移动过（区分拖/点）
@@ -2319,9 +2319,9 @@
     const DRAG_THRESHOLD = 4;
 
     // ---------- IndexedDB 断点缓存：跨刷新/关页保留已下载切片 ----------
-    // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）。
+    // 单槽记录 {key, at, datas}：datas 与切片一一对应（未下载为 null）.
     // 内存 partial 是快路径，IndexedDB 是刷新后的兜底；隐私模式等不可用时
-    // 静默退化为仅内存缓存，不影响下载主流程。
+    // 静默退化为仅内存缓存，不影响下载主流程.
     const IDB_NAME = 'dlr-replay-cache', IDB_STORE = 'slices', IDB_SLOT = 'current';
     let idbDb = null, idbBroken = false;
     function idbOpen() {
@@ -2396,7 +2396,7 @@
         const s = $('dlr-spin'); if (s) s.style.display = 'inline-block';
         // 进度条由隐藏变为显示，面板高度随之变化 —— 光环要立刻跟上，
         // 且进度条自身有展开过渡，结束后再补一次 sync（transitionend 不冒泡，
-        // 只能直接监听进度条元素）。
+        // 只能直接监听进度条元素）.
         if (window.__ringSync) {
             try { window.__ringSync(); } catch (e) { }
             if (!p.__ringBound && window.__ringSync) {
@@ -2427,7 +2427,7 @@
         if (xb) xb.style.width = v + '%';   // 收缩条进度同步
         // 光环跟随面板几何：进度条宽度变化、状态文案换行、折叠区展开收起
         // 都会改变面板尺寸，而那些并不一定触发面板自身的 transition，
-        // 只靠 transitionstart 同步会让光环与面板错位。
+        // 只靠 transitionstart 同步会让光环与面板错位.
         if (window.__ringSync) try { window.__ringSync(); } catch (e) { }
     }
     function progressDone(ok) {
@@ -2449,8 +2449,8 @@
     }
 
     // ---------- 原始分辨率自动分析：TS 解包 → H.264 SPS ----------
-    // 真实回放是单档 TS（无 STREAM-INF 变体），分辨率只能从切片内 SPS 读出。
-    // 已用真实切片验证：1280×720 Main@3.1。
+    // 真实回放是单档 TS（无 STREAM-INF 变体），分辨率只能从切片内 SPS 读出.
+    // 已用真实切片验证：1280×720 Main@3.1.
     function parseSpsToDims(nal) {
         let bit = 0;
         const maxBit = nal.length * 8;
@@ -2575,11 +2575,11 @@
         return null;
     }
 
-    // 抽样探测多片体积，给贪心调度用。
+    // 抽样探测多片体积，给贪心调度用.
     // 只探头部与尾部若干片（1 字节 Range，不下载整片）：HLS 切片体积通常只有
-    // 码率波动造成的轻微差异，抽样足够反映「谁更大」；全量探测反而拖慢启动。
+    // 码率波动造成的轻微差异，抽样足够反映「谁更大」；全量探测反而拖慢启动.
     // 关键：BYTERANGE 分片的 content-range 反映的是整个文件而非这一段，
-    // 对它们返回 null（贪心退回原序），别拿错的体积做决策。
+    // 对它们返回 null（贪心退回原序），别拿错的体积做决策.
     async function probeSegSizes(segs, sample) {
         const n = segs.length;
         if (!n) return null;
@@ -2616,7 +2616,7 @@
     }
 
     // ---------- 预解析：csrf → 播放地址 → m3u8，可被 run() 复用 ----------
-    // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟。
+    // 检测到回放页时后台先跑，点下载直接进入切片阶段；缓存 10 分钟.
     let prepCache = null;      // {key, at, token, model, parsed}
     const PREP_TTL = 10 * 60 * 1000;
     async function prep(roomId, liveUuid, wantRes) {
@@ -2654,15 +2654,15 @@
             } catch (e) { appendLog('   ⚠ 分辨率探测失败:' + e.message); }
         }
         prepCache = { key, at: Date.now(), token, model, parsed, resInfo };
-        // 解析完成即后台预下载切片（v2.7.0）。不 await：解析阶段就该返回，
-        // 预下载在后台自己跑，用户什么时候点下载都不影响。
+        // 解析完成即后台预下载切片（v2.7.0）. 不 await：解析阶段就该返回，
+        // 预下载在后台自己跑，用户什么时候点下载都不影响.
         startPreDownload(roomId, liveUuid, wantRes, parsed);
         return prepCache;
     }
 
     // ---------- 解析阶段后台预下载（v2.7.0） ----------
     // 逐片静默拉取，弱并发（2）以免和用户正在做的事抢带宽；进度写到日志一行，
-    // 不弹提示、不改进度条——它是后台行为，不该打扰用户。
+    // 不弹提示、不改进度条——它是后台行为，不该打扰用户.
     async function startPreDownload(roomId, liveUuid, wantRes, parsed) {
         if (!preEnabled() || !parsed || !parsed.segments || !parsed.segments.length) return;
         // fMP4 的 init 段与分片要按序取，弱并发下按顺序取即可，无需贪心调度
@@ -2710,15 +2710,15 @@
 
     // ---------- 智能调度：贪心优先级 + 自适应并发 ----------
     // 为什么要调度而不是顺序取：HLS 切片时长不完全相等，而且「谁先下完」决定了
-    // 尾部长度。贪心策略——优先下体积最大的切片，让「最长的那根线」尽早启动，
-    // 整体完成时间由最慢的一片决定，先啃硬骨头能把尾部压缩下来。
-    // 自适应并发：并发开太高会互相抢带宽甚至被 CDN 限流，全低又浪费时间。
+    // 尾部长度. 贪心策略——优先下体积最大的切片，让「最长的那根线」尽早启动，
+    // 整体完成时间由最慢的一片决定，先啃硬骨头能把尾部压缩下来.
+    // 自适应并发：并发开太高会互相抢带宽甚至被 CDN 限流，全低又浪费时间.
     // 做法是滑动窗口测速——连续若干次成功且速度没有崩，就加一个线程；
-    // 一旦出现失败或速度骤降，先减线程再重试。
+    // 一旦出现失败或速度骤降，先减线程再重试.
     const SMART = { enabled: true, min: 1, max: 16 };
 
-    // 构造贪心取片顺序：体积大的优先，同体积按原序（保证可复现）。
-    // sizes 缺失（未知体积）时按原序排，不要因为缺数据就打乱。
+    // 构造贪心取片顺序：体积大的优先，同体积按原序（保证可复现）.
+    // sizes 缺失（未知体积）时按原序排，不要因为缺数据就打乱.
     function greedyOrder(sizes, skip) {
         const n = sizes.length;
         const idx = [];
@@ -2737,8 +2737,8 @@
         return idx;
     }
 
-    // 自适应并发控制器。每完成/失败一片调用一次 note()，返回当前建议并发。
-    // 设计成纯计数器 + 回调，便于在测试里脱离网络单独验证行为。
+    // 自适应并发控制器. 每完成/失败一片调用一次 note()，返回当前建议并发.
+    // 设计成纯计数器 + 回调，便于在测试里脱离网络单独验证行为.
     function makeConcurrencyGovernor(opts) {
         const min = Math.max(1, opts.min || 1);
         const max = Math.max(min, opts.max || 16);
@@ -2751,9 +2751,9 @@
 
         return {
             get value() { return cur; },
-            // 成功一片：把它的字节数记进窗口，窗口满则尝试加一个线程。
+            // 成功一片：把它的字节数记进窗口，窗口满则尝试加一个线程.
             // 速度由累计字节/窗口时长算，不看单片瞬时值——瞬时值噪声太大，
-            // 一片 3MB/0.2s 和一片 10KB/0.01s 都可能只是 CDN 抖动。
+            // 一片 3MB/0.2s 和一片 10KB/0.01s 都可能只是 CDN 抖动.
             note(size, speedBps) {
                 const now = Date.now();
                 if (!firstT) firstT = now;
@@ -2761,8 +2761,8 @@
                 winBytes += (typeof size === 'number' && size > 0) ? size : 0;
                 winMs = now - firstT;
                 if (speedBps) lastSpeed = speedBps;
-                // 结算条件用「片数窗口」为准、时间为辅。只靠时间在极快网络下
-                // 会在同一毫秒内算不出平均速度，导致并发永远不涨。
+                // 结算条件用「片数窗口」为准、时间为辅. 只靠时间在极快网络下
+                // 会在同一毫秒内算不出平均速度，导致并发永远不涨.
                 if (winDone >= WINDOW || winMs >= WIN_MS) {
                     const avg = winMs > 0 ? winBytes / (winMs / 1000) : winBytes / WINDOW;
                     if (avg > 0 && cur < max) cur++;
@@ -2770,12 +2770,12 @@
                 }
                 return cur;
             },
-            // 失败一片：立刻降并发（先退避再重试，别继续硬打）。
-            // 注意 winFail 的生命周期——它只该影响「当前这一个窗口」。
+            // 失败一片：立刻降并发（先退避再重试，别继续硬打）.
+            // 注意 winFail 的生命周期——它只该影响「当前这一个窗口」.
             // 早先的实现里 winFail 一旦置 1 就再没被清过（结算时才清，
             // 但结算被 winFail===0 卡住，形成死锁），结果一次失败之后
-            // 并发永远涨不回来。现在：降并发 + 重开窗口，但不置抑制标记，
-            // 因为「降并发」本身就是这次失败带来的惩罚，不需要再叠一层。
+            // 并发永远涨不回来. 现在：降并发 + 重开窗口，但不置抑制标记，
+            // 因为「降并发」本身就是这次失败带来的惩罚，不需要再叠一层.
             fail() {
                 if (cur > min) cur--;
                 winDone = 0; winBytes = 0; winMs = 0; firstT = 0;
@@ -2786,10 +2786,10 @@
     }
 
     // ---------- 下载队列：多个回放顺序执行 ----------
-    // 设计取向：run() 一行不改，队列只做外层调度。这样「单次回放」的行为与
-    // 1.9.x 完全一致，出问题也只需怀疑队列本身。
+    // 设计取向：run() 一行不改，队列只做外层调度. 这样「单次回放」的行为与
+    // 1.9.x 完全一致，出问题也只需怀疑队列本身.
     // 为什么顺序执行而不是并发：并发多个回放会让总带宽争抢，
-    // 反而把每个都拖慢；用户要的是「一次挂几个」，不是「一起抢带宽」。
+    // 反而把每个都拖慢；用户要的是「一次挂几个」，不是「一起抢带宽」.
     const Q = {
         items: [],        // {id, roomId, liveUuid, opts, title}
         running: false,   // 队列调度器是否在跑
@@ -2797,11 +2797,11 @@
     };
     let queueSeq = 0;
     // run() 内部 catch 掉所有异常并写状态栏，不向外抛——队列调度器无法靠
-    // try/catch 判定成败，只能读这个由 run() 显式回写的标志。
+    // try/catch 判定成败，只能读这个由 run() 显式回写的标志.
     let lastRunResult = { ok: false, name: '' };
 
-    // 解析一行输入 → 一个任务。支持整段 URL、roomId/liveUuid 对、纯 liveUuid。
-    // 失败要指出是哪一行，不能只说「格式错误」。
+    // 解析一行输入 → 一个任务. 支持整段 URL、roomId/liveUuid 对、纯 liveUuid.
+    // 失败要指出是哪一行，不能只说「格式错误」.
     function parseQueueLine(line, label) {
         const raw = String(line == null ? '' : line).trim();
         if (!raw) throw new Error(label + ' 为空');
@@ -2812,7 +2812,7 @@
         // roomId 与 liveUuid 用空白/逗号/分号分隔
         const parts = raw.split(/[\s,;]+/).filter(Boolean);
         // 带标签的写法要同时支持 "roomId x liveUuid y" 和 "roomId=x liveUuid=y"
-        // ——从钉钉或聊天记录里复制出来时，等号形式很常见。
+        // ——从钉钉或聊天记录里复制出来时，等号形式很常见.
         const tagged = { roomId: '', liveUuid: '' };
         for (const p of parts) {
             const m = /^roomid\s*=\s*(.+)$/i.exec(p);
@@ -2835,7 +2835,7 @@
         throw new Error(label + ' 格式不对: 需要整段回放链接, 或"roomId liveUuid"一对');
     }
 
-    // 从多行文本解析出任务列表。空行与 # 开头的行忽略。
+    // 从多行文本解析出任务列表. 空行与 # 开头的行忽略.
     function parseQueueInput(text) {
         const lines = String(text == null ? '' : text).split(/\r?\n/);
         const out = [];
@@ -2872,7 +2872,7 @@
             const clip = clipSegments(parsed.segments, opts.clipFrom, opts.clipTo);
             // 帧级截取需要完整切片集：它靠「第一片对应回放 0 秒」做时间轴基准，
             // 若这里就用裁过的切片，基准会错（第一片其实是区间中段而非开头），
-            // 而且区间外的关键帧拿不到。所以启用时先按完整列表下载，最后再精裁。
+            // 而且区间外的关键帧拿不到. 所以启用时先按完整列表下载，最后再精裁.
             let frameClipWanted = false;
             try {
                 const fv = GM_getValue('dlr_frameclip');
@@ -2898,7 +2898,7 @@
             const plannedName = baseName + suffix + clipTag + (wantMp4 ? '.mp4' : '.ts');
 
             // v3.4.0: 「下载交给 aria2」总开关开启时, 这一整个下载改由本机 aria2 执行 ——
-            // 浏览器内不再拉切片/拼接/保存, 面板只负责解析并推送任务清单。
+            // 浏览器内不再拉切片/拼接/保存, 面板只负责解析并推送任务清单.
             if (window.__aria2Enabled) {
                 const arCfg = aria2Config();   // 模块级读取器
                 progressSet(P.prep, '交给 aria2');
@@ -2959,7 +2959,7 @@
             pre.stop = true;
             const preKey = roomId + '|' + liveUuid + '|' + (opts.res || '');
             // 只有「未设截取」时才整段命中——预下载下的是完整回放的片子，
-            // 带区间裁剪时切片下标对不上，不能直接复用。
+            // 带区间裁剪时切片下标对不上，不能直接复用.
             if (!clip.range) {
                 const hit = preTake(preKey);
                 if (hit && hit.count) {
@@ -3034,8 +3034,8 @@
                 progressSet(P.dlStart + (done / segs.length) * span, label);
             };
 
-            // 智能调度：贪心取片顺序 + 自适应并发。
-            // 切片体积未知时（探测失败）greedyOrder 会退回原序，不会打乱下载。
+            // 智能调度：贪心取片顺序 + 自适应并发.
+            // 切片体积未知时（探测失败）greedyOrder 会退回原序，不会打乱下载.
             // 开关状态每次下载时读一次（用户可能在下载中途改）
             let smartOn = SMART.enabled;
             try {
@@ -3164,10 +3164,10 @@
                     '点"下载本页回放"只重试这 ' + failures.length + '  片');
                 throw new Error(failures.length + '/' + segs.length + ' 切片失败 (#' + first.index + '' + first.reason + '). 建议:' + advice);
             }
-            // 完整性校验：数量齐全、非空、TS 同步字节对齐（fMP4 不适用）。
+            // 完整性校验：数量齐全、非空、TS 同步字节对齐（fMP4 不适用）.
             // 不硬性要求 d[0]===0x47——真实切片可能带 ID3/填充前缀（probeResolution
             // 就是扫描找对齐的），改为在首 188 字节内找对齐点并验证 188 周期性：
-            // HTML 错误页/截断数据找不到周期性 → 判异常；带前缀的合法切片能通过。
+            // HTML 错误页/截断数据找不到周期性 → 判异常；带前缀的合法切片能通过.
             const looksLikeTs = (d) => {
                 if (d.length < 188) return true;   // 过短无法判型，只保证非空
                 const maxOff = Math.min(188, d.length);
@@ -3208,9 +3208,9 @@
             try { await idbClearPartial(); } catch (e) { }
             lastFailed = [];
 
-            // 帧级精确截取（实验性）：切片对齐的粗剪之后，把起止点修到关键帧。
+            // 帧级精确截取（实验性）：切片对齐的粗剪之后，把起止点修到关键帧.
             // 放在这里是因为需要全部切片已就位；失败则原样输出切片对齐的结果，
-            // 不能因为「想更精确」反而让用户拿不到文件。
+            // 不能因为「想更精确」反而让用户拿不到文件.
             let frameClipped = null;
             if (frameClipUsable && clip.range) {
                 progressSet(P.mux, '帧级截取');
@@ -3232,8 +3232,8 @@
 
             appendLog('⑤ 拼接 ...');
             progressSet(P.mux, '拼接');
-            // 帧级截取成功后用精修后的字节流，否则用原切片数组。
-            // 两者都是 Uint8Array[]，下游拼接逻辑完全一致。
+            // 帧级截取成功后用精修后的字节流，否则用原切片数组.
+            // 两者都是 Uint8Array[]，下游拼接逻辑完全一致.
             const outParts = frameClipped && frameClipped.bytes ? [frameClipped.bytes] : datas;
             let blob, outName = plannedName, note = '';
             if (parsed.fmp4) {
@@ -3282,10 +3282,10 @@
         } finally {
             // 兜底复位：progressDone() 里有一堆 DOM 操作（进度条/spinner/光环），
             // 万一它自己抛错，DL.running 会永远停在 true —— 之后空格/Esc 快捷键全部
-            // 失效、「删除已下载」也清不掉缓存，面板看起来「死了」。这里无条件复位。
+            // 失效、「删除已下载」也清不掉缓存，面板看起来「死了」. 这里无条件复位.
             DL.running = false; DL.pause = false; DL.cancel = false;
             // 预下载的停止标志也要复位：正式下载时置 true 让它停下，
-            // 但下一轮解析若不复位，startPreDownload 会直接 return、预下载再也不启动。
+            // 但下一轮解析若不复位，startPreDownload 会直接 return、预下载再也不启动.
             pre.running = false;
             try { panel.classList.remove('dling'); } catch (e) { }
             try { const c = $('dlr-ctl'); if (c) c.style.display = 'none'; } catch (e) { }
@@ -3325,17 +3325,17 @@
         ring.appendChild(ringBeam);
         document.body.appendChild(ring);
         // 光环跟随面板的位置和尺寸（含圆角）——SVG rect 几何
-        // 光环必须贴着**看得见的那块面板**，也就是 .body，而不是 #dlr-panel。
+        // 光环必须贴着**看得见的那块面板**，也就是 .body，而不是 #dlr-panel.
         //
         // 根因（v3.0.2~3.0.7 三次改错的地方）：#dlr-panel 只是外壳，它有
         // `padding:14px 16px` 且 `background:transparent` —— 自身不可见；用户看到的
-        // 深色圆角面板是它内部的 .body。之前光环一直按 #dlr-panel 的盒子画，于是它永远
+        // 深色圆角面板是它内部的 .body. 之前光环一直按 #dlr-panel 的盒子画，于是它永远
         // 比可见面板大出一圈内边距（实测左右各 16px、上下各 14px），
-        // 看起来就是「在外面框出一大块地方」。这不是同步/时序问题，改多少次
-        // ResizeObserver、rAF、CSS 定位都不对 —— 参照对象本身就选错了。
+        // 看起来就是「在外面框出一大块地方」. 这不是同步/时序问题，改多少次
+        // ResizeObserver、rAF、CSS 定位都不对 —— 参照对象本身就选错了.
         //
         // 例外：收缩成横条时 .body 被压成 0 高（grid-template-rows:0fr），
-        // 那时可见的是 .expand 横条，要改用它。
+        // 那时可见的是 .expand 横条，要改用它.
         const ringTarget = () => {
             const b = panel.querySelector('.body');
             if (b && b.getBoundingClientRect().height > 1) return b;
@@ -3357,18 +3357,18 @@
                 el.setAttribute('height', Math.max(0, H - 4));
                 el.setAttribute('rx', rx);
             });
-            // dasharray 必须按**真实周长**设置。
+            // dasharray 必须按**真实周长**设置.
             // 原来写死 pathLength=400 + dasharray 110 290：pathLength 会把实际周长
             // （几百 px）强行归一化成 400，dasharray 的比例随之失真，光带缩成一小段
-            // 而不是沿整圈流动——这正是「光环看不见 / 只有一小截」的根因。
+            // 而不是沿整圈流动——这正是「光环看不见 / 只有一小截」的根因.
             const cw = Math.max(0, W - 4), ch = Math.max(0, H - 4);
             const perim = 2 * (cw + ch) - 8 * rx + 2 * Math.PI * rx;   // 圆角矩形周长
             if (perim > 0) {
                 const seg = Math.max(24, perim * 0.28);   //亮段约占周长 28%
-                // dasharray 必须用**逗号**分隔两个数。原来写成 seg + '' + (perim - seg)
+                // dasharray 必须用**逗号**分隔两个数. 原来写成 seg + '' + (perim - seg)
                 // 是字符串拼接：'533.1' + '1370.8' → '533.11370.8'，浏览器只解析出
                 // 单个数 533.113（第二个小数点处截断），于是实际是「533px 实线 + 0.8px 缝」，
-                // 绕一圈几乎全亮、根本看不出光带在流动。
+                // 绕一圈几乎全亮、根本看不出光带在流动.
                 ringBeam.setAttribute('stroke-dasharray', seg + ',' + (perim - seg));
                 ringBeam.style.strokeDashoffset = '0';
                 ringBeam.style.setProperty('--ring-perim', perim + 'px');
@@ -3376,35 +3376,35 @@
         };
         syncRing();
         // 光环显隐：用 .on 类切换（SVG 无 border，改由 CSS opacity 控制）
-        // 显隐用内联 opacity，不用 class。实测本页面上 `.on{opacity:1}`
+        // 显隐用内联 opacity，不用 class. 实测本页面上 `.on{opacity:1}`
         // 虽已匹配却仍算出 0（与 .more-body 同一个坑），class 规则不可靠；
-        // 内联优先级最高，不依赖任何样式表计算。
+        // 内联优先级最高，不依赖任何样式表计算.
         const ringHide = () => { ring.classList.remove('on'); ring.style.opacity = '0'; };
         const ringShow = () => { ring.classList.add('on'); ring.style.opacity = '1'; syncRing(); };
         ringHide();
-        // 面板几何变化时自动跟随光环。
+        // 面板几何变化时自动跟随光环.
         //
         // 原来靠 transitionstart/transitionend 启动/停止一个 rAF 逐帧循环，有三个致命缺陷：
         //  1) transitionstart 在**子元素**上也会冒泡到面板，收起面板时子元素先结束过渡
         //     （如 .collapse 的 opacity 150ms，比面板 280ms 短），ringAnimStop 立刻停掉循环，
-        //     面板自己的高度/宽度过渡还在跑 —— 光环从此停在旧尺寸上不动了。
-        //     表现就是「光环在外面框出一大块地方」/「展开后光环不跟着变大」。
+        //     面板自己的高度/宽度过渡还在跑 —— 光环从此停在旧尺寸上不动了.
+        //     表现就是「光环在外面框出一大块地方」/「展开后光环不跟着变大」.
         //  2) 面板尺寸变化的**原因**不只有过渡：更多设置展开（子元素 height 过渡）、
         //     状态栏换行、窗口缩放、字体加载，都不一定在面板上触发 transition，
-        //     光环就完全失联。
-        //  3) 只靠事件时机补一次 syncRing，补在动画中段（错位 20~187px）。
+        //     光环就完全失联.
+        //  3) 只靠事件时机补一次 syncRing，补在动画中段（错位 20~187px）.
         //
         // 改为 ResizeObserver：面板盒子一变就同步，与「为什么变」无关，
-        // 收起/展开/更多设置/窗口缩放全部覆盖。ResizeObserver 不冒泡，
-        // 观察 #dlr-panel 自己即可拿到所有尺寸变化。
+        // 收起/展开/更多设置/窗口缩放全部覆盖.ResizeObserver 不冒泡，
+        // 观察 #dlr-panel 自己即可拿到所有尺寸变化.
         let ringRaf = 0;
         const ringAnimLoop = () => {
             syncRing();
             ringRaf = requestAnimationFrame(ringAnimLoop);
             };
-        // 过渡期间补 rAF，让 dasharray/圆角跟得上补间；非过渡期不常驻轮询。
+        // 过渡期间补 rAF，让 dasharray/圆角跟得上补间；非过渡期不常驻轮询.
         // 起停仍看面板自身的过渡，但**忽略子元素冒泡来的事件**，
-        // 否则短过渡的子元素会提前把循环停掉（就是原来那个 bug）。
+        // 否则短过渡的子元素会提前把循环停掉（就是原来那个 bug）.
         const panelIsTransitioning = (e) => (e.target === panel);
         const ringAnimStart = (e) => {
             if (!panelIsTransitioning(e)) return;
@@ -3418,13 +3418,13 @@
         panel.addEventListener('transitionstart', ringAnimStart);
         panel.addEventListener('transitionend', ringAnimStop);
         // 窗口缩放会改变面板的位置（fixed 定位跟着视口走），尺寸没变时
-        // ResizeObserver 不触发，同样要手动补一次。
+        // ResizeObserver 不触发，同样要手动补一次.
         window.addEventListener('resize', () => {
             try { syncRing(); } catch (e) { }
         });
-        // ResizeObserver 兜住所有「不触发面板自身 transition」的尺寸变化。
+        // ResizeObserver 兜住所有「不触发面板自身 transition」的尺寸变化.
         // 它在过渡进行中也会连续触发，与 rAF 循环互补；两者同时存在也无害
-        // （syncRing 幂等，只是重复写同样的一组属性）。
+        // （syncRing 幂等，只是重复写同样的一组属性）.
         if (typeof ResizeObserver === 'function') {
             try {
                 const ro = new ResizeObserver(() => {
@@ -3459,22 +3459,22 @@
         // 更多设置：可折叠，默认收起
         const moreT = $('dlr-more-t'), moreB = $('dlr-more-b');
         // 兜底展开高度：真实高度由 JS 实测写入，这个值只在实测前那一瞬生效，
-        // 作用是「点开立刻有东西」，避免实测失败时展开成空白。
+        // 作用是「点开立刻有东西」，避免实测失败时展开成空白.
         const FALLBACK_H = 420;
         const setMore = (open) => {
             moreT.setAttribute('aria-expanded', open ? 'true' : 'false');
             moreB.classList.toggle('open', open);
-            // 展开高度按内容实测后写内联 style。内联优先级高于样式表，不依赖
-            // CSS 特异性计算（展开值被收起值压住是这个坑的教训）。
+            // 展开高度按内容实测后写内联 style. 内联优先级高于样式表，不依赖
+            // CSS 特异性计算（展开值被收起值压住是这个坑的教训）.
             //
             // 关键：不能在收起状态下直接读 scrollHeight——此时容器 height:0 +
             // overflow:hidden，内容被压扁，scrollHeight 恒为 0，于是永远写不进
-            // 高度，展开动画也就不发生。先把约束临时解除再量，量完恢复。
+            // 高度，展开动画也就不发生. 先把约束临时解除再量，量完恢复.
             moreB.style.opacity = open ? '1' : '0';
             if (open) {
-                // 先给兜底高度保证「立刻能看到东西」，再异步量真实高度修正。
+                // 先给兜底高度保证「立刻能看到东西」，再异步量真实高度修正.
                 // 不能只靠 scrollHeight：字体未加载 / 内容尚未布局时会量到 0，
-                // if (h > 0) 一旦不成立高度就永远写不进去，展开后是空白一片。
+                // if (h > 0) 一旦不成立高度就永远写不进去，展开后是空白一片.
                 moreB.style.height = FALLBACK_H + 'px';
                 setTimeout(() => {
                     const prev = moreB.style.height;
@@ -3527,23 +3527,23 @@
         const prefetch = bindChk('dlr-prefetch', 'dlr_prefetch', true);   // 自动解析：默认开启
         // 完成/失败通知：提示音默认关（浏览器自动播放策略常拦默认开的声音，
         // 让人误以为坏了），系统通知默认开（无声、可靠、点一下能回面板）
-        // 智能调度：默认开启。关掉后并发固定为上面设定的线程数。
+        // 智能调度：默认开启. 关掉后并发固定为上面设定的线程数.
         bindChk('dlr-smart', 'dlr_smart', true);
-        // 帧级精确截取：默认关闭。切片边界对齐已能满足多数需求，帧级精修要
+        // 帧级精确截取：默认关闭. 切片边界对齐已能满足多数需求，帧级精修要
         // 多下一遍完整回放（依赖完整切片集建立时间轴基准），流量代价不小，
-        // 所以交给用户按需开启——面板上有醒目提示告诉他在哪开。
+        // 所以交给用户按需开启——面板上有醒目提示告诉他在哪开.
         bindChk('dlr-frameclip', 'dlr_frameclip', false);
-        // 拖动时自动收起「更多设置」/输出区（默认开）。拖拽逻辑读同一个键。
+        // 拖动时自动收起「更多设置」/输出区（默认开）. 拖拽逻辑读同一个键.
         bindChk('dlr-drag-collapse', 'dlr_drag_collapse', true);
-        // 解析阶段后台预下载（v2.7.0）：默认开。开启后打开页面即在后台拉切片，
-        // 用户点「下载」时几乎瞬间完成。关掉则行为与 2.6.x 完全一致。
+        // 解析阶段后台预下载（v2.7.0）：默认开. 开启后打开页面即在后台拉切片，
+        // 用户点「下载」时几乎瞬间完成. 关掉则行为与 2.6.x 完全一致.
         bindChk('dlr-predownload', 'dlr_predownload', true);
 
-        // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下。
-        // 事件委托绑在 tip 容器上，而不是绑在链接自己身上。
+        // 截取区的「点这里打开帧级精确截取」：展开更多设置、滚到开关、闪两下.
+        // 事件委托绑在 tip 容器上，而不是绑在链接自己身上.
         // 链接由 setClipTip() 在运行时生成（晚于此处执行），直接
         // getElementById('dlr-open-frameclip') 此刻拿到 null，绑定会静默失效；
-        // 委托则无论链接何时重建都生效——applyClipUnit 每次改提示都会换新节点。
+        // 委托则无论链接何时重建都生效——applyClipUnit 每次改提示都会换新节点.
         const clipTipEl = $('dlr-clip-tip');
         if (clipTipEl) {
             clipTipEl.addEventListener('click', (e) => {
@@ -3566,7 +3566,7 @@
         bindChk('dlr-notify-desktop', 'dlr_notify_desktop', false);
         bindChk('dlr-notify-sound', 'dlr_notify_sound', false);
         // 勾选变化时同步回模块级变量：notify() 在下载流程里读它们，
-        // 不跟着 DOM 走，否则用户改了开关要等下次下载才生效。
+        // 不跟着 DOM 走，否则用户改了开关要等下次下载才生效.
         const notifyDeskChk = $('dlr-notify-desktop'), notifySndChk = $('dlr-notify-sound');
         const syncNotifyFlags = () => {
             setNotifyFlags(notifyDeskChk.checked, notifySndChk.checked);
@@ -3580,9 +3580,9 @@
         // 上一次的有效选择：用户点「自定义…」后取消/输错时要回到这里，而不是留下哨兵值
         let lastValidRes = '';
         try { const rv = GM_getValue('dlr_res'); if (rv) resSel.value = rv; } catch (e) { }
-        // 常用档位：按宽度降序，实际只显示「不超过原始分辨率」的那些。
+        // 常用档位：按宽度降序，实际只显示「不超过原始分辨率」的那些.
         // 播放列表里常常没有对应档位，所以这里只是快捷入口——最终仍由
-        // pickResVariant 挑最接近的真实档位。
+        // pickResVariant 挑最接近的真实档位.
         const COMMON_RES = [
             { w: 3840, h: 2160 }, { w: 2560, h: 1440 }, { w: 1920, h: 1080 },
             { w: 1600, h: 900 }, { w: 1280, h: 720 }, { w: 960, h: 540 },
@@ -3621,8 +3621,8 @@
             resSel.value = cur;   // 保留用户选择（不存在则回落"自动"）
         };
         resSel.addEventListener('change', () => {
-            // 「自定义…」不直接用：弹输入框，校验后换成真实档位值存回去。
-            // 用 prompt 而不是自造弹窗：少一份焦点/无障碍处理，浏览器原生足够。
+            // 「自定义…」不直接用：弹输入框，校验后换成真实档位值存回去.
+            // 用 prompt 而不是自造弹窗：少一份焦点/无障碍处理，浏览器原生足够.
             if (resSel.value === CUSTOM_RES) {
                 const cur = (prepCache && prepCache.resInfo)
                     ? (prepCache.resInfo.width + 'x' + prepCache.resInfo.height) : '';
@@ -3657,7 +3657,7 @@
                 }
                 resSel.value = hit.res;
                 // 播放列表里没有正好等于输入值的档位时必须说清楚——
-                // 否则用户以为下了 999x999，其实是 1280x720。
+                // 否则用户以为下了 999x999，其实是 1280x720.
                 if (hit.res !== normalized) {
                     setStatus('ℹ 播放列表里没有 ' + normalized + ', 实际使用最接近的档位 ' +
                         hit.res + ' (' + Math.round(hit.bandwidth / 1000) + ' kbps)');
@@ -3717,7 +3717,7 @@
         frost.addEventListener('change', applyFrost);
         applyFrost();
         const autoUpd = bindChk('dlr-autoupdate', 'dlr_autoupdate', true);   // 自动检查更新：默认开启
-        // 更新源：默认 Gitee（国内可达）。改了立刻重查一次，别让用户等下次自动检查。
+        // 更新源：默认 Gitee（国内可达）. 改了立刻重查一次，别让用户等下次自动检查.
         const updSrcSel = $('dlr-updsrc');
         if (updSrcSel) {
             try {
@@ -3728,8 +3728,8 @@
                 try { GM_setValue('dlr_updsrc', updSrcSel.value); } catch (e) { }
                 const label = updSrcSel.options[updSrcSel.selectedIndex].textContent.split(' (')[0];
                 setStatus('ℹ 更新源已切换为 ' + label + ', 正在重新检查...');
-                // 立即按新源重查一次：换源后继续拿旧源的结论没有意义。
-                // remoteVersion / UPD 在下方定义，这里用 setTimeout 延到本轮之后。
+                // 立即按新源重查一次：换源后继续拿旧源的结论没有意义.
+                // remoteVersion / UPD 在下方定义，这里用 setTimeout 延到本轮之后.
                 setTimeout(async () => {
                     try {
                         const v = await remoteVersion();
@@ -3764,8 +3764,8 @@
                 ontimeout: () => rej(new Error('超时')),
             });
         });
-        // 更新源：默认 Gitee。raw.githubusercontent.com 在国内时通时不通，
-        // 而 Gitee 镜像通常稳定——让用户自己选比猜更靠谱。
+        // 更新源：默认 Gitee.raw.githubusercontent.com 在国内时通时不通，
+        // 而 Gitee 镜像通常稳定——让用户自己选比猜更靠谱.
         //   gitee(默认) → 只查 Gitee，快且稳
         //   github      → 只查 GitHub
         //   auto        → 先 GitHub，不通回落 Gitee（旧行为）
@@ -3863,9 +3863,9 @@
         // 宽度/内边距/圆角为定值可直接补间；内容用 opacity 淡出，高度随内容塌缩
         const applyMini = () => {
         panel.classList.toggle('mini', miniState);
-        // 收起/展开时重算内嵌高度下限 (收起态必须清零, 见 CSS 注释)。
+        // 收起/展开时重算内嵌高度下限 (收起态必须清零, 见 CSS 注释).
         try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
-        // 收起态横条的高度用内联写入（内联必胜样式表，避开特异性竞争）。
+        // 收起态横条的高度用内联写入（内联必胜样式表，避开特异性竞争）.
         const ex = panel.querySelector('.expand');
         if (ex) {
             if (miniState) {
@@ -3883,13 +3883,13 @@
                 ex.style.opacity = '0';
                 ex.style.height = '0px';
             }
-            // 展开/收起改的是面板整体高度，上限跟着重算。
+            // 展开/收起改的是面板整体高度，上限跟着重算.
             try { syncFloatMaxH(panel); } catch (e) { }
         }
     };
-        // 归一化：'1'/1/true/'true' = 收缩，'0'/0/false/'false' = 展开，缺省 = 展开。
+        // 归一化：'1'/1/true/'true' = 收缩，'0'/0/false/'false' = 展开，缺省 = 展开.
         // 历史上 dlr_mini 存过布尔/字符串、dlr_mini_def 存过数字，严格 === 会漏判，
-        // 导致「面板实际收缩、下拉框却显示默认展开」。
+        // 导致「面板实际收缩、下拉框却显示默认展开」.
         const triState = (v) => (v === '1' || v === 1 || v === true || v === 'true') ? 1
             : (v === '0' || v === 0 || v === false || v === 'false') ? 0 : -1;
         let miniState = false;
@@ -3927,7 +3927,7 @@
         const exp = panel.querySelector('.expand');
         const col = panel.querySelector('.collapse');
         exp.addEventListener('click', () => {
-            // 刚拖完就松手的那一下 click 不算「点开」——否则拖一下面板就弹开了。
+            // 刚拖完就松手的那一下 click 不算「点开」——否则拖一下面板就弹开了.
             if (suppressExpandClickAt && Date.now() - suppressExpandClickAt < 350) {
                 suppressExpandClickAt = 0;
                 return;
@@ -3976,7 +3976,7 @@
         });
 
         // 只重试失败切片：本质就是普通下载——partial 缓存里好片会被自动跳过，
-        // 所以不需要另一条下载路径，按钮只是把「这次只补 N 片」讲清楚并少点一次。
+        // 所以不需要另一条下载路径，按钮只是把「这次只补 N 片」讲清楚并少点一次.
         const renderRetryRow = () => {
             const row = $('dlr-retry-row');
             if (!row) return;
@@ -4000,8 +4000,8 @@
         });
         renderRetryRow();
 
-        // 导出诊断日志：把收集到的现场写成 .txt 存进浏览器下载目录。
-        // 用户把它发给我们就能复现问题，比截图和口头描述有效得多。
+        // 导出诊断日志：把收集到的现场写成 .txt 存进浏览器下载目录.
+        // 用户把它发给我们就能复现问题，比截图和口头描述有效得多.
         const runDiagExport = async (btn) => {
             const oldText = btn.textContent;
             btn.disabled = true;
@@ -4022,8 +4022,8 @@
             }
         };
 
-        // 导出 m3u8：把当前这一路的切片列表存成标准播放列表。
-        // 必须等解析成功才有内容可导，所以没解析时给出明确提示而不是导出空文件。
+        // 导出 m3u8：把当前这一路的切片列表存成标准播放列表.
+        // 必须等解析成功才有内容可导，所以没解析时给出明确提示而不是导出空文件.
         const runM3u8Export = async (btn) => {
             if (!prepCache || !prepCache.parsed || !(prepCache.parsed.segments || []).length) {
                 setStatus('⚠ 尚未解析到切片列表, 请先点"下载本页回放"或等预取完成', true);
@@ -4053,7 +4053,7 @@
         };
 
         // ---------- aria2 推送 (v3.3.0, 实验性) ----------
-        // 设置项持久化; 密钥只写 GM 存储, 不外发、不进诊断日志。
+        // 设置项持久化; 密钥只写 GM 存储, 不外发、不进诊断日志.
         const arHost = $('dlr-aria2-host'), arPort = $('dlr-aria2-port'),
             arSecret = $('dlr-aria2-secret'), arDir = $('dlr-aria2-dir'),
             arState = $('dlr-aria2-state'), arTest = $('dlr-aria2-test');
@@ -4063,11 +4063,11 @@
             arState.className = cls || '';
         };
         // aria2 总开关 (v3.4.0, 实验性, 默认关闭): 开启后**所有**下载任务交给 aria2,
-        // 包括「下载本页回放」与队列里的每个回放; 关闭时行为与之前完全一致。
+        // 包括「下载本页回放」与队列里的每个回放; 关闭时行为与之前完全一致.
         window.__aria2Enabled = false;
         try { window.__aria2Enabled = !!GM_getValue('dlr_aria2_on', false); } catch (e) { }
         const arOnChk = $('dlr-aria2-on');
-        // 配置区只在勾选总开关后才展示: 未启用 aria2 时不该占着面板空间。
+        // 配置区只在勾选总开关后才展示: 未启用 aria2 时不该占着面板空间.
         const arBox = $('dlr-aria2-box');
         const arSyncBox = () => {
             if (arBox) arBox.style.display = (window.__aria2Enabled ? '' : 'none');
@@ -4086,7 +4086,7 @@
             });
         }
 
-        // 面板读配置统一走模块级读取器, 不留两份实现。
+        // 面板读配置统一走模块级读取器, 不留两份实现.
         const arConfig = () => aria2Config();
         const arSave = () => {
             try {
@@ -4096,7 +4096,7 @@
                 GM_setValue('dlr_aria2_dir', arConfig().dir);
             } catch (e) { }
         };
-        // 回填已存设置 (密钥回填是本地存储→本地输入框, 不经过网络)。
+        // 回填已存设置 (密钥回填是本地存储→本地输入框, 不经过网络).
         if (arHost) {
             try { arHost.value = GM_getValue('dlr_aria2_host', ARIA2_HOST_DEF) || ARIA2_HOST_DEF; } catch (e) { }
             try { arPort.value = GM_getValue('dlr_aria2_port', ARIA2_PORT_DEF) || ARIA2_PORT_DEF; } catch (e) { }
@@ -4106,7 +4106,7 @@
                 el && el.addEventListener('change', () => { arSave(); arSetState(''); });
             });
         }
-        // 测试连接: getVersion 是最轻的调用, 拿它区分「连不上 / 密钥错 / 版本不兼容」。
+        // 测试连接: getVersion 是最轻的调用, 拿它区分「连不上 / 密钥错 / 版本不兼容」.
         arTest && arTest.addEventListener('click', async () => {
             const cfg = arConfig();
             arSave();
@@ -4177,7 +4177,7 @@
 
         // ---------- 队列 UI ----------
         // 三个 q* 变量原先漏了 const（逗号续行时只有第一项带声明），
-        // 于是它们会变成隐式全局变量并污染共享作用域。
+        // 于是它们会变成隐式全局变量并污染共享作用域.
         const qBox = $('dlr-queue'), qRow = $('dlr-queue-ctl'),
             qGo = $('dlr-queue-go'), qClear = $('dlr-queue-clear'),
             qInfo = $('dlr-queue-info');
@@ -4196,13 +4196,13 @@
 
         // ---------- 面板拖拽 + 键盘快捷键（v2.4.0） ----------
         // 位置持久化：只存用户拖过之后的坐标；没拖过就保持 CSS 的右下角默认位，
-        // 这样窗口变小/变大时默认位依然正确（存死坐标会在小窗口下越界）。
+        // 这样窗口变小/变大时默认位依然正确（存死坐标会在小窗口下越界）.
         const POS_KEY = 'dlr_pos';
 
 
 
-        // 最近一次生效的视口坐标。窗口缩放后要靠它重新钳制 —— 拖过的面板用的是
-        // 存下来的 left/top 定值，窗口一小就跑到屏幕外去了（见下面的 resize 处理）。
+        // 最近一次生效的视口坐标. 窗口缩放后要靠它重新钳制 —— 拖过的面板用的是
+        // 存下来的 left/top 定值，窗口一小就跑到屏幕外去了（见下面的 resize 处理）.
         let lastPos = null;
         const applyPos = (x, y) => {
             if (panel.classList.contains('docked')) return;   // 内嵌态几何归 CSS, 拖拽/resize 不写位置
@@ -4211,24 +4211,24 @@
             panel.style.left = p.left;
             panel.style.top = p.top;
             // v3.2.1: right/bottom 写 'auto' 而不是像素值 —— top+bottom 同时存在会把
-            // shell 高度钉成上下间距（悬浮收起态实测 570px 空壳）。只锚定 left/top，
-            // 高度交还给内容；inline 'auto' 同时压过样式表默认的 right:16/bottom:16。
+            // shell 高度钉成上下间距（悬浮收起态实测 570px 空壳）. 只锚定 left/top，
+            // 高度交还给内容；inline 'auto' 同时压过样式表默认的 right:16/bottom:16.
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
             // 记下**钳制后**的坐标：下一轮 resize 要以它为基准，否则误差会逐次累积
             lastPos = { x: parseFloat(p.left) || 0, y: parseFloat(p.top) || 0 };
-            // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上。
+            // 拖动只改位置不改尺寸，ResizeObserver 不会触发，光环必须手动跟上.
             // 漏掉这一步的表现：拖动面板时光环停在原地不动，面板滑走了，
-            // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）。
+            // 光环独自框在旧位置一大块地方（暂停状态下拖动尤其明显）.
             try { syncRing(); } catch (e) { }
             try { syncFloatMaxH(panel); } catch (e) { }   // 位置变了，可用高度也变了
         };
-        // 窗口缩放后重新钳制面板位置。
+        // 窗口缩放后重新钳制面板位置.
         // 缺陷表现：把面板拖到最右再缩小窗口，面板会有一大半跑到屏幕外
         // （实测 1400px 窗口拖到右缘，缩到 760px 后 392px 宽的面板有 240px 在屏幕外，
         //  占 -61%），而且**鼠标再也点不到它**——elementFromPoint 在任何可见位置都
-        // 返回不到面板，用户只能刷新页面找回。clampPanelPos 本来就有防越界的钳制，
-        // 只是缩放后没人再调用它。这里按上次的坐标重跑一次 applyPos 即可。
+        // 返回不到面板，用户只能刷新页面找回.clampPanelPos 本来就有防越界的钳制，
+        // 只是缩放后没人再调用它. 这里按上次的坐标重跑一次 applyPos 即可.
         window.addEventListener('resize', () => {
             try {
                 if (lastPos) applyPos(lastPos.x, lastPos.y);
@@ -4254,7 +4254,7 @@
             panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
             panel.classList.add('docked');
             host.appendChild(panel);
-            dockHost = host;            // 入槽后重算高度: 上限依赖本页的页签条位置。
+            dockHost = host;            // 入槽后重算高度: 上限依赖本页的页签条位置.
             try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
             try { syncRing(); } catch (e) { }
             try { markScrollHost(); } catch (e) { }
@@ -4267,7 +4267,7 @@
             try { unmarkScrollHost(); } catch (e) { }
             dockHost = null;
             document.body.appendChild(panel);
-            // 回悬浮: 清掉内嵌高度变量, 悬浮态用 CSS 默认高度。
+            // 回悬浮: 清掉内嵌高度变量, 悬浮态用 CSS 默认高度.
             panel.style.removeProperty('--dlr-dock-h');
             panel.style.removeProperty('--dlr-dock-min');
             try { restorePos(); } catch (e) { }   // 回到悬浮: 拖过的坐标 / 没拖过就是右下角
@@ -4275,9 +4275,9 @@
             try { syncFloatMaxH(panel); } catch (e) { }   // 回悬浮 → 重新按视口算上限
         }
         // 内嵌态: 面板作为末尾子节点进列, 列可能被撑得比视口高, 列自己的原生滚动条
-        // (白底+箭头) 贴着深色面板冒出来。向上找第一个真正在滚的祖先 (overflow-y 为
+        // (白底+箭头) 贴着深色面板冒出来. 向上找第一个真正在滚的祖先 (overflow-y 为
         // auto/scroll 且确实溢出) 打标记, 只交 CSS 藏外观, 滚动能力原样保留;
-        // 1.5s 守护与 dockPanel 会重复调用 (幂等), undock 摘除。
+        // 1.5s 守护与 dockPanel 会重复调用 (幂等), undock 摘除.
         function markScrollHost() {
             if (!docked()) return;
             try {
@@ -4299,9 +4299,9 @@
             } catch (e) { }
         }
         // ---------- 内嵌态高度可拉伸 (v3.4.0) ----------
-        // 纯几何: 下限按实测「文字不被裁」算, 上限按页签条以下的实际空间算。
+        // 纯几何: 下限按实测「文字不被裁」算, 上限按页签条以下的实际空间算.
         const DOCK_MIN_H = 330;
-        // 页签条以下到列底 = 可用高度; 找不到页签条就退回 430。
+        // 页签条以下到列底 = 可用高度; 找不到页签条就退回 430.
         function dockSpace() {
             const host = dockHost;
             if (!host || !host.getBoundingClientRect) return 430;
@@ -4319,16 +4319,16 @@
             }
             return 430;
         }
-        // 唯一的写入口: 拖动、窗口缩放、dock/undock、收起/展开都走它。
+        // 唯一的写入口: 拖动、窗口缩放、dock/undock、收起/展开都走它.
         function applyDockHeight(px) {
             if (!docked()) return;
             const h = Math.max(DOCK_MIN_H, Math.min(dockSpace(), Math.round(px)));
             panel.style.setProperty('--dlr-dock-h', h + 'px');
-            // 收起态清零下限, 否则 .bin 的 min-height 会顶开 .body 的 0fr。
+            // 收起态清零下限, 否则 .bin 的 min-height 会顶开 .body 的 0fr.
             try { syncRing(); } catch (e) { }
             return h;
         }
-        // 供 applyMini / dockPanel / undockPanel 复用。
+        // 供 applyMini / dockPanel / undockPanel 复用.
         window.__dockSyncHeight = () => {
             if (!docked()) return;
             let h = parseInt(panel.style.getPropertyValue('--dlr-dock-h'), 10);
@@ -4339,9 +4339,9 @@
             const savedH = parseInt(GM_getValue('dlr_dock_h'), 10);
             if (isFinite(savedH) && savedH >= DOCK_MIN_H) applyDockHeight(savedH);
         } catch (e) { }
-        // 拖动把手改高度: 面板底边锚定在列底, 顶边把手直接跟随指针 —— 下拉 = 变矮, 上推 = 变高。
+        // 拖动把手改高度: 面板底边锚定在列底, 顶边把手直接跟随指针 —— 下拉 = 变矮, 上推 = 变高.
         // pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
-        // 指针拖出把手范围也不丢事件。
+        // 指针拖出把手范围也不丢事件.
         const rz = $('dlr-dock-resize');
         if (rz) {
             let rStart = 0, hStart = 0, rActive = false;
@@ -4421,11 +4421,11 @@
             }, 1500);
         }
 
-        // 拖拽把手有两个：展开态是标题区(.bin)，收起态是横条(.expand)。
-        // 只绑一个的话，收起后就抓不到东西了——用户反馈的正是这个。
+        // 拖拽把手有两个：展开态是标题区(.bin)，收起态是横条(.expand).
+        // 只绑一个的话，收起后就抓不到东西了——用户反馈的正是这个.
         const handles = panel.querySelectorAll('.drag');
-        // 「拖拽时自动收起更多设置与输出区」——可关。拖着面板时那些折叠区
-        // 只会碍事（还可能拖动过程中误触展开动画），默认自动收起。
+        // 「拖拽时自动收起更多设置与输出区」——可关. 拖着面板时那些折叠区
+        // 只会碍事（还可能拖动过程中误触展开动画），默认自动收起.
         let autoCollapseOnDrag = true;
         try {
             const av = GM_getValue('dlr_drag_collapse');
@@ -4446,14 +4446,14 @@
                 setMore(false);
             }
         };
-        // 只有落在「控件之外」的按下才开始拖拽。
+        // 只有落在「控件之外」的按下才开始拖拽.
         // 这条很关键：拖拽区 .bin 包住了整个表单（链接框/文件名/分辨率/截取…），
         // 若不区分就一律 preventDefault，区域内所有输入框和下拉框都收不到焦点，
-        // 整个面板变成「只能看不能改」——用户实测反馈的正是这个问题。
-        // 排除「表单控件」和「收起/展开按钮」——它们各自有原生交互，不能被拖拽劫持。
+        // 整个面板变成「只能看不能改」——用户实测反馈的正是这个问题.
+        // 排除「表单控件」和「收起/展开按钮」——它们各自有原生交互，不能被拖拽劫持.
         // 注意不能把 .expand 写进排除表：它本身就是收起态的拖拽把手，
-        // 排除掉会让收起后完全拖不动（这正是 2.4.0 的 bug）。
-        // 只在「不是把手自身」时才排除：点横条 = 拖动，横条内的 .collapse 才排除。
+        // 排除掉会让收起后完全拖不动（这正是 2.4.0 的 bug）.
+        // 只在「不是把手自身」时才排除：点横条 = 拖动，横条内的 .collapse 才排除.
         const onControl = (t, self) => {
             if (!t) return false;
             if (t.closest('input,select,textarea,button,a,label,[contenteditable="true"]')) return true;
@@ -4468,7 +4468,7 @@
                 // 落在控件上 → 完全不管，浏览器原生行为（聚焦、展开下拉）照旧
                 if (onControl(e.target, handle)) return;
                 // 收起态横条上单击是「展开」，拖动阈值内不算拖——否则
-                // 用户想点开面板却因为手抖而移动了它。
+                // 用户想点开面板却因为手抖而移动了它.
                 if (panel.classList.contains('mini')) {
                     dragStartX = e.clientX; dragStartY = e.clientY;
                     dragPending = true;
@@ -4504,19 +4504,19 @@
             if (mb2 && mb2.dataset.preDragOpen === '1') { setMore(true); delete mb2.dataset.preDragOpen; }
             const r = panel.getBoundingClientRect();
             // 必须 try 保护：这里若抛错会跳过下面的 suppressExpandClickAt 赋值，
-            // 结果是「拖完面板反而弹开」。
+            // 结果是「拖完面板反而弹开」.
             try { GM_setValue(POS_KEY, Math.round(r.left) + ',' + Math.round(r.top)); }
             catch (e) { }
-            // 拖过之后不要再触发横条的「点击展开」——否则拖一下就弹开了。
+            // 拖过之后不要再触发横条的「点击展开」——否则拖一下就弹开了.
             // 用时间戳而不是标志位：click 事件紧跟 mouseup 在同一轮派发，
-            // setTimeout(...,0) 清标志的回调会先跑，导致标志提前失效。
+            // setTimeout(...,0) 清标志的回调会先跑，导致标志提前失效.
             suppressExpandClickAt = moved ? Date.now() : 0;
         });
 
-        // 快捷键：一律带 modifier 或用安全键，避免和输入法/网页快捷键打架。
-        // 输入框、textarea、可编辑区里不拦截——用户正在打字不能被抢键。
+        // 快捷键：一律带 modifier 或用安全键，避免和输入法/网页快捷键打架.
+        // 输入框、textarea、可编辑区里不拦截——用户正在打字不能被抢键.
         // 用 DL.running 而不是看按钮显隐来判断状态：面板收起时 dlr-ctl 不可见，
-        // 但下载确实在跑——只看显隐会让空格在收起状态下误触发「开始下载」。
+        // 但下载确实在跑——只看显隐会让空格在收起状态下误触发「开始下载」.
         const typing = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
         window.addEventListener('keydown', (e) => {
             if (typing(e.target) || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -4551,11 +4551,11 @@
         restorePos();
 
         // ---------- 截取时间输入：单位上限跟随回放总时长（v2.3.0） ----------
-        // 时长未知时只规范化已填文本；解析出总时长后才知道该不该用 hh:mm:ss。
+        // 时长未知时只规范化已填文本；解析出总时长后才知道该不该用 hh:mm:ss.
         let clipUnit = 'mm:ss';
-        // 提示行结构拆成三段：纯文本 + 跳转链接 + 纯文本尾巴。
+        // 提示行结构拆成三段：纯文本 + 跳转链接 + 纯文本尾巴.
         // 不能用 tip.textContent = ... 整体覆写——那会把里面的 <a> 一起替换掉，
-        // 链接会在启动时被无声抹掉（textContent 赋值会连子节点一起干掉）。
+        // 链接会在启动时被无声抹掉（textContent 赋值会连子节点一起干掉）.
         const setClipTip = (durText) => {
             const tip = $('dlr-clip-tip');
             if (!tip) return;
@@ -4595,8 +4595,8 @@
             setStatus('✕ 队列已清空');
         });
 
-        // 调度器：逐个执行。单个失败不中断整队——用户排了 5 个，第 3 个签名过期
-        // 不该让 4、5 也不跑完。全部跑完再汇总。
+        // 调度器：逐个执行. 单个失败不中断整队——用户排了 5 个，第 3 个签名过期
+        // 不该让 4、5 也不跑完. 全部跑完再汇总.
         async function runQueue() {
             if (Q.running) return;
             const { out, errs } = parseQueueInput(qBox.value);
@@ -4640,12 +4640,12 @@
                         itemErr = String((e && e.message) || e);
                     }
                     // run() 自己吞掉了异常，不抛——必须读它回写的标志才算数，
-                    // 否则四个全失败也会汇总成「成功 4」。
+                    // 否则四个全失败也会汇总成「成功 4」.
                     if (lastRunResult.ok) {
                         okList.push({ liveUuid: it.liveUuid, name: lastRunResult.name });
                     } else {
                         const reason = itemErr ||
-                            ((statusEl && statusEl.textContent) || '未知错误').replace(/^❌\s*失败：/, '');
+                            ((statusEl && statusEl.textContent) || '未知错误').replace(/^❌\s*失败\s*[:：]\s*/, '');
                         failList.push({ liveUuid: it.liveUuid, err: reason });
                         appendLog('❌ 队列 [' + (i + 1) + '] 失败:' + reason);
                     }
@@ -4710,7 +4710,7 @@
             $('dlr-url').value = location.href;
             setStatus('检测到回放 · roomId=' + p.roomId + ' · liveUuid=' + p.liveUuid.slice(0, 8) + '...');
             // 预解析：检测到回放页且开关开启时，后台先跑 csrf/播放地址/m3u8，
-            // 点下载直接进入切片阶段。失败不打扰用户，状态栏提示即可。
+            // 点下载直接进入切片阶段. 失败不打扰用户，状态栏提示即可.
             if (prefetch.checked) {
                 setStatus('⏳ 正在预取播放地址与切片索引...');
                 prep(p.roomId, p.liveUuid, resSel.value).then(() => {

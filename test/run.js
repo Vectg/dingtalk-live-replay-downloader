@@ -2,6 +2,7 @@
 // 单元测试：函数源码由 extract.js 从**已发布**的 .user.js 里原样抽取，
 // 所以这里测的就是用户真正装到 Tampermonkey 里的那份代码。
 const { loadFns } = require('./extract.js');
+const fs = require('fs');
 const { extractFn } = require('./extract.js');
 
 let pass = 0;
@@ -1433,6 +1434,26 @@ section('智能调度');
         eq(p8.style._vars['--dlr-float-max-h'], '644px', '不传 innerH → 用 window.innerHeight');
         global.window.innerHeight = realIH;
     }
+    section('队列失败原因前缀剥离（v3.6.3）');
+    {
+        // 这条正则是 runQueue 里的一行内联代码，抽取器切不出来，所以分两步：
+        // 先断言已发布脚本里那行源码确实是预期的字面量（防止它再漂移），
+        // 再用同一条正则跑行为断言。
+        // 它坏过一次：setStatus 写的是半角「失败:」，正则却只认全角「失败：」，
+        // 前缀从未被剥掉，队列失败原因带双重前缀。
+        const { SRC_PATH } = require('./extract.js');
+        const raw = fs.readFileSync(SRC_PATH, 'utf8');
+        ok(raw.indexOf("replace(/^❌\\s*失败\\s*[:：]\\s*/, '')") >= 0,
+            '已发布脚本用的是半角+全角都认的前缀正则');
+        const strip = /^❌\s*失败\s*[:：]\s*/;
+        eq('❌ 失败: xxx'.replace(strip, ''), 'xxx', '半角冒号 → 前缀被剥掉');
+        eq('❌ 失败： xxx'.replace(strip, ''), 'xxx', '全角冒号 → 前缀被剥掉');
+        eq('❌ 失败 ：xxx'.replace(strip, ''), 'xxx', '冒号前有空格 → 前缀被剥掉');
+        eq('xxx'.replace(strip, ''), 'xxx', '无前缀 → 原样返回');
+        eq('❌ 切片失败 (#12). 建议: xxx'.replace(strip, ''), '❌ 切片失败 (#12). 建议: xxx',
+            '别的 ❌ 文案不被误剥');
+    }
+
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

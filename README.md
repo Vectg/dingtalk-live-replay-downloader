@@ -14,7 +14,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.5.0）
+## 功能（v3.6.3）
 
 **实验性（未正式发布）**
 
@@ -99,6 +99,12 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **AES-128**：遇 `#EXT-X-KEY` 用 Web Crypto 拉 key 逐片解密.
 - **fMP4 / BYTERANGE**：支持 `#EXT-X-MAP` 初始化段与 `#EXT-X-BYTERANGE` 字节范围.
 - **并发**（1–16，默认自动识别 = CPU 逻辑核数 ×2，手动设置后以设置为准）与**重试**（1–10，默认 3，指数退避）.
+
+**v3.6.x 修复**
+
+- **悬浮态滚动条（v3.6.2）**：面板拖到视口下半部分再全部展开时，可滚高度只剩一百多像素，正文会冒出一根滚动条（内层还叠着第二根）. 现在按面板实际位置实时算出还能往下长多少，展开动画途中就生效；内嵌到侧栏时自动交还给侧栏自己的高度.
+- **队列失败原因重复前缀（v3.6.3）**：下载队列里某一项失败时，汇总出的原因会带两层「❌ 失败:」—— 状态栏写的是半角冒号，而剥前缀的正则只认全角冒号，两者对不上. 现已半角/全角都认.
+- **文案标点（v3.6.3）**：脚本与本文档统一使用英文句号，中文正文里的逗号/顿号/冒号/括号保持不变.
 
 ---
 
@@ -195,7 +201,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.5.0)
+## Features (v3.6.3)
 
 **Experimental (not yet proven)**
 
@@ -285,6 +291,12 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - The panel footer shows the version beside a small grey "check for updates" label (no longer a button since v1.9.4). **The automatic check is on by default** (toggle in 更多设置): on page load it compares against the latest release in the background and, when a newer one exists, that label becomes a clickable blue "new version x.y.z ↑". **It never navigates on its own — click to open the update page.** With the automatic check off, pressing it checks manually and you still click once more to reach the download. "Already latest" and check failures appear briefly and then revert. **If GitHub is unreachable it falls back to the Gitee mirror.**
 - Every release is tagged and recorded in [CHANGELOG.md](CHANGELOG.md).
 - CI runs `node --check`, the unit tests, and a **version-bump guard** that fails the build if `.user.js` changed without `@version` increasing — the exact trap 1.6.8 fell into, where a fix shipped but users never received it.
+
+**v3.6.x fixes**
+
+- **Floating-panel scrollbar (v3.6.2)**: drag the panel into the lower half of the viewport and expand everything, and the usable height drops to about a hundred pixels — a scrollbar appears on the body, stacked on top of a second one inside it. The cap is now measured from the panel's real position, so it is already correct mid-animation; when the panel is docked into the side column it hands the height back to the column.
+- **Duplicated queue failure prefix (v3.6.3)**: when an item in the download queue failed, the summarised reason carried two layers of `❌ 失败:` — the status line wrote a half-width colon while the stripping regex only accepted a full-width one, so the two never matched. Both widths are accepted now.
+- **Punctuation (v3.6.3)**: the script and this document use English full stops throughout; commas, ideographic commas, colons and parentheses inside Chinese prose are left as they are.
 
 
 ---
