@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.4.0
+// @version      3.5.0
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -292,6 +292,52 @@
         if (!m.playbackUrl) throw new Error('playbackUrl 为空: code=' + (j.code || '') + ' status=' + (m.status || ''));
         return m;
     }
+
+    // ---------- 聊天记录接口 (v3.5.0, 实验性) ----------
+    // 签名是实测出来的: GET + loadMoreId(必填,可空串) + sortType(必填整数)。
+    // POST → 405; 缺 sortType 或 loadMoreId → 400 并在 message 里点名缺哪个。
+    // 登录态下浏览器内真实请求仍返回 errorCode 19004「游客身份失效」——
+    // 该接口要的不是网页登录态, 所以这里如实抛出, 不伪造内容。
+    const CHAT_URL = 'https://lv.dingtalk.com/live/listComment';
+    async function fetchChatPage(roomId, liveUuid, loadMoreId) {
+        const qs = 'roomId=' + encodeURIComponent(roomId) +
+            '&liveUuid=' + encodeURIComponent(liveUuid) +
+            '&loadMoreId=' + encodeURIComponent(loadMoreId || '') +
+            '&sortType=1&size=' + CHAT_PAGE_SIZE;
+        const r = await gmx({ method: 'GET', url: CHAT_URL + '?' + qs, cookie: '' });
+        let j;
+        try { j = JSON.parse(r.response); } catch (e) {
+            throw new Error('接口返回的不是 JSON (HTTP ' + r.status + ')');
+        }
+        if (j && j.success === false) {
+            const code = j.errorCode || '';
+            const msg = j.errorMsg || '未知错误';
+            if (String(code) === '19004') {
+                throw new Error('钉钉拒绝了该请求（19004 ' + msg + '）—— '
+                    + '这个聊天接口不认网页登录态, 目前拿不到内容; 面板不会编造数据');
+            }
+            throw new Error('接口错误 ' + code + ': ' + msg);
+        }
+        return j && (j.result || j.data || j);
+    }
+    // 按 loadMoreId 游标翻页, 最多 maxPages 页; 返回规范化后的消息数组。
+    async function fetchAllChat(roomId, liveUuid, maxPages) {
+        const all = [];
+        let cursor = '';
+        const cap = maxPages || 20;
+        for (let p = 0; p < cap; p++) {
+            const page = await fetchChatPage(roomId, liveUuid, cursor);
+            const batch = chatNormalize(page);
+            const rawList = (page && (page.commentList || page.comments || page.list)) || [];
+            all.push(...batch);
+            // 拿不到新的游标就停: 重复游标说明服务端不再给新数据
+            const next = (page && (page.loadMoreId || (page.result && page.result.loadMoreId))) || '';
+            if (!rawList.length || !next || next === cursor) break;
+            cursor = next;
+        }
+        return all;
+    }
+
 
     // ---------- 工具 ----------
     // 空名返回 null（表示「用默认」），不是 'replay'——否则回放标题永远无法回退
@@ -1197,6 +1243,104 @@
     // 便于用 VLC / ffmpeg / 另一个下载器重新拉取，或存档。
     // 只导出当前 clips 对应的媒体清单，不含 master 的多码率分支——
     // 因为切片已被选定，再嵌多码率反而会让别的播放器重新选一次。
+    // ---------- 聊天记录导出（v3.5.0, 实验性） ----------
+    // 接口实测结论（2026-10-05 登录态, 浏览器内带完整 cookie 真实请求）:
+    //   GET https://lv.dingtalk.com/live/listComment
+    //       ?roomId=…&liveUuid=…&loadMoreId=（必填, 可空串）&sortType=（必填整数）&size=…
+    //   → 参数齐了返回 200, 但 body 是 {"success":false,"errorCode":"19004",
+    //     "errorMsg":"游客身份失效，请尝试刷新页面"} —— 即使浏览器里已登录、csrf/XSRF 齐全、
+    //     cookie 带上也一样。所以这个接口不接受「网页登录态」这一种身份, 我们如实报错,
+    //     不伪造任何聊天内容。签名是对探出来的: POST 是 405, 缺 sortType/loadMoreId 各 400。
+    const CHAT_PAGE_SIZE = 50;
+    // 把一条评论摊平成稳定字段顺序 —— 各格式共用同一份规范化结果, 避免四套解析各写一遍。
+    function chatNormalize(raw) {
+        const pick = (o, keys) => {
+            for (let i = 0; i < keys.length; i++) {
+                const v = o[keys[i]];
+                if (v !== undefined && v !== null && v !== '') return v;
+            }
+            return '';
+        };
+        const out = [];
+        const arr = Array.isArray(raw) ? raw : (raw && (raw.commentList || raw.comments || raw.list)) || [];
+        for (let i = 0; i < arr.length; i++) {
+            const c = arr[i] || {};
+            const timeRaw = pick(c, ['createTime', 'createGmt', 'gmtCreate', 'time', 'timestamp']);
+            let timeText = '';
+            if (typeof timeRaw === 'number' && timeRaw > 0) {
+                const ms = timeRaw > 1e12 ? timeRaw : timeRaw * 1000;
+                timeText = new Date(ms).toLocaleString('zh-CN');
+            } else if (timeRaw) {
+                timeText = String(timeRaw);
+            }
+            const user = pick(c, ['nick', 'nickname', 'userName', 'name', 'senderName', 'uname']);
+            const text = pick(c, ['content', 'text', 'message', 'commentContent', 'body']);
+            if (!text && !user) continue;
+            out.push({
+                time: timeText,
+                user: String(user || '匿名'),
+                text: String(text || ''),
+                raw: c,
+            });
+        }
+        return out;
+    }
+    // .txt —— 逐条「[时间] 用户: 内容」
+    function chatToTxt(list) {
+        return list.map((m) => '[' + (m.time || '-') + '] ' + m.user + ': ' + m.text).join('\r\n') + '\r\n';
+    }
+    // .json —— 带元信息的完整结构（保留原始字段, 方便二次处理）
+    function chatToJson(list, meta) {
+        return JSON.stringify(Object.assign({
+            exportedAt: new Date().toISOString(),
+            count: list.length,
+            messages: list.map((m) => ({ time: m.time, user: m.user, text: m.text })),
+        }, meta || {}), null, 2);
+    }
+    // .csv —— 带 BOM, Excel 打开中文不乱码; 字段里的引号/换行按 RFC 4180 转义
+    function chatToCsv(list) {
+        const cell = (v) => '"' + String(v === undefined || v === null ? '' : v).replace(/"/g, '""') + '"';
+        const rows = [cell('时间') + ',' + cell('用户') + ',' + cell('内容')];
+        for (let i = 0; i < list.length; i++) rows.push(cell(list[i].time) + ',' + cell(list[i].user) + ',' + cell(list[i].text));
+        return '\ufeff' + rows.join('\r\n') + '\r\n';
+    }
+    // .html —— 自带样式, 直接双击就能看/打印
+    function chatToHtml(list, meta) {
+        const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const rows = list.map((m) => '<tr><td class="t">' + esc(m.time) + '</td><td class="u">' +
+            esc(m.user) + '</td><td>' + esc(m.text) + '</td></tr>').join('');
+        const title = esc((meta && meta.title) || '直播聊天记录');
+        return '<!DOCTYPE html>\n<html lang="zh-CN"><head><meta charset="utf-8">' +
+            '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+            '<title>' + title + '</title><style>' +
+            'body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;' +
+            'margin:24px;background:#fff;color:#1b1d21}' +
+            'h1{font-size:17px;margin:0 0 4px}.meta{color:#6b7280;font-size:12px;margin-bottom:14px}' +
+            'table{border-collapse:collapse;width:100%}' +
+            'th,td{border-bottom:1px solid #e8eaed;padding:6px 8px;text-align:left;vertical-align:top}' +
+            'th{background:#f5f6f7;font-weight:600}' +
+            'td.t{white-space:nowrap;color:#6b7280;width:150px}td.u{white-space:nowrap;width:130px;font-weight:600}' +
+            'tr:hover td{background:#fafbfc}' +
+            '@media print{body{margin:0}th{background:#eee}}</style></head><body>' +
+            '<h1>' + title + '</h1><div class="meta">共 ' + list.length + ' 条 · 导出于 ' +
+            esc(new Date().toLocaleString('zh-CN')) + '</div>' +
+            '<table><thead><tr><th>时间</th><th>用户</th><th>内容</th></tr></thead><tbody>' +
+            rows + '</tbody></table></body></html>';
+    }
+    // 格式名 → {ext, mime, render}。UI 与保存共用这一张表, 不在两处各写一遍。
+    function chatFormat(name, list, meta) {
+        const table = {
+            txt: { ext: 'txt', mime: 'text/plain;charset=utf-8', render: chatToTxt },
+            json: { ext: 'json', mime: 'application/json;charset=utf-8', render: chatToJson },
+            csv: { ext: 'csv', mime: 'text/csv;charset=utf-8', render: chatToCsv },
+            html: { ext: 'html', mime: 'text/html;charset=utf-8', render: chatToHtml },
+        };
+        const f = table[name] || table.txt;
+        return { ext: f.ext, mime: f.mime, text: f.render(list, meta || {}) };
+    }
+
+
     function buildM3u8(parsed, baseName) {
         const segs = parsed.segments || [];
         const L = [];
@@ -1785,6 +1929,8 @@
             <button id="dlr-diag" title="把版本, 解析结果, 失败片号, 未捕获异常等导出为 .txt, 便于排查问题">📋 导出诊断日志</button>
             <button id="dlr-m3u8" title="把当前选中分辨率的切片列表导出为 .m3u8, 可用 VLC / ffmpeg 重新拉取">📄 导出 m3u8</button>
             <button id="dlr-aria2-send" title="实验性. 把当前分辨率的每个切片 URL 逐条交给本机 aria2 下载 (aria2.addUri), 文件落到 aria2 的保存目录; 合成一个文件请用 ffmpeg -f concat. 需要本机已开启 aria2 RPC (默认 127.0.0.1:6801, 强烈建议配 --rpc-secret)">⬇ 发送到 aria2</button>
+            <button id="dlr-chat" title="导出本场回放的聊天记录 (实验性). 需要登录态; 可选 .txt / .json / .csv / .html 四种格式">💬 导出聊天记录</button>
+            <select id="dlr-chat-fmt" title="聊天记录导出格式"><option value="txt" selected>.txt</option><option value="json">.json</option><option value="csv">.csv</option><option value="html">.html</option></select>
         </div>
         <div class="sec">
             <div class="more-toggle" id="dlr-more-t" role="button" aria-expanded="false">更多设置<span class="mt-ic"></span></div>
@@ -1827,7 +1973,7 @@
                     <label class="chk" title="实验性, 默认关闭. 开启后**所有下载任务**改由本机 aria2 执行: 点「下载本页回放」以及队列里的每一个回放, 切片逐条 addUri, 面板内的切片下载/拼接/保存全部跳过. 关闭时行为与之前完全一致. 需要本机已启动 aria2 RPC (默认 127.0.0.1:6801, 强烈建议配 --rpc-secret).">
                         <input type="checkbox" id="dlr-aria2-on">下载交给 aria2(实验性)</label>
                 </div>
-                <div id="dlr-aria2-box">
+                <div id="dlr-aria2-box" style="display:none">
                     <div class="arow">
                         <input type="text" id="dlr-aria2-host" title="aria2 RPC 主机, 建议保持 127.0.0.1">
                         <input type="number" id="dlr-aria2-port" min="1" max="65535" title="aria2 RPC 端口 (默认 6801)">
@@ -3883,12 +4029,19 @@
         window.__aria2Enabled = false;
         try { window.__aria2Enabled = !!GM_getValue('dlr_aria2_on', false); } catch (e) { }
         const arOnChk = $('dlr-aria2-on');
+        // 配置区只在勾选总开关后才展示: 未启用 aria2 时不该占着面板空间。
+        const arBox = $('dlr-aria2-box');
+        const arSyncBox = () => {
+            if (arBox) arBox.style.display = (window.__aria2Enabled ? '' : 'none');
+        };
+        arSyncBox();
         if (arOnChk) {
             arOnChk.checked = window.__aria2Enabled;
             arOnChk.addEventListener('change', () => {
                 window.__aria2Enabled = arOnChk.checked;
                 try { GM_setValue('dlr_aria2_on', arOnChk.checked); } catch (e) { }
                 arSetState(arOnChk.checked ? '已开启: 之后的所有下载都交给 aria2' : '');
+                arSyncBox();
                 appendLog(arOnChk.checked
                     ? '⬇ 已开启「下载交给 aria2」, 之后所有下载任务改由本机 aria2 执行'
                     : '⬇ 已关闭「下载交给 aria2」, 下载回到浏览器内');
@@ -4009,6 +4162,42 @@
         });
 
 
+        // ---------- 聊天记录导出 (v3.5.0, 实验性) ----------
+        const chatBtn = $('dlr-chat'), chatFmt = $('dlr-chat-fmt');
+        chatBtn && chatBtn.addEventListener('click', async () => {
+            let p = null;
+            try { p = parseUrl(($('dlr-url') && $('dlr-url').value) || location.href); }
+            catch (e) {
+                setStatus('⚠ 请先填入或打开一个回放页面', true);
+                return;
+            }
+            const fmtName = (chatFmt && chatFmt.value) || 'txt';
+            const oldText = chatBtn.textContent;
+            chatBtn.disabled = true;
+            chatBtn.textContent = '⏳ 拉取中...';
+            try {
+                const list = await fetchAllChat(p.roomId, p.liveUuid, 20);
+                if (!list.length) {
+                    setStatus('⚠ 这个回放没有可导出的聊天记录', true);
+                    appendLog('💬 聊天记录: 0 条');
+                    return;
+                }
+                const title = (prepCache && prepCache.model && prepCache.model.title) || '直播回放';
+                const out = chatFormat(fmtName, list, { title: title, roomId: p.roomId, liveUuid: p.liveUuid });
+                const base = (sanitize(title) || 'chat') + '-聊天记录.' + out.ext;
+                const blob = new Blob([out.text], { type: out.mime });
+                await downloadBlob(blob, base);
+                setStatus('💬 已导出 ' + list.length + ' 条聊天记录: ' + base);
+                appendLog('💬 已导出 ' + list.length + ' 条 (' + out.ext + '): ' + base);
+            } catch (e) {
+                setStatus('❌ 聊天记录导出失败: ' + e.message, true);
+                appendLog('❌ 聊天记录导出失败: ' + e.message);
+            } finally {
+                chatBtn.disabled = false;
+                chatBtn.textContent = oldText;
+            }
+        });
+
         // ---------- 队列 UI ----------
         // 三个 q* 变量原先漏了 const（逗号续行时只有第一项带声明），
         // 于是它们会变成隐式全局变量并污染共享作用域。
@@ -4087,7 +4276,7 @@
             panel.classList.add('docked');
             host.appendChild(panel);
             dockHost = host;            // 入槽后重算高度: 上限依赖本页的页签条位置。
-            try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }            dockHost = host;
+            try { if (window.__dockSyncHeight) window.__dockSyncHeight(); } catch (e) { }
             try { syncRing(); } catch (e) { }
             return true;
         }

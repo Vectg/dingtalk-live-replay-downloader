@@ -14,7 +14,11 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## 功能（v3.4.0）
+## 功能（v3.5.0）
+
+**实验性（未正式发布）**
+
+- **聊天记录导出**：面板底部「📎 导出聊天记录」一键拉取回放聊天的全部评论历史（最多 20 页游标）。支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）。详情参见 Chat 文档。扫码获取：`https://lv.dingtalk.com/live/listComment` 带 `loadMoreId` 分页获取。
 
 **核心**
 

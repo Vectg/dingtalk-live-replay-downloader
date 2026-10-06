@@ -1,9 +1,13 @@
 # Changelog
 
 本文件记录本项目的所有 notable changes.
-格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/), 
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.5.0] - 2026-10-05
+### 新增
+- **聊天记录导出（实验性）**：面板底部「📎 导出聊天记录」一键拉取回放聊天的全部评论历史（最多 20 页游标）。支持导出格式：`.txt`（逐条「[时间] 用户: 内容」）、`.json`（带导出时间戳与元信息）、`.csv`（BOM 防乱码）、`.html`（可直接双击查看/打印）。详情参见 Chat 文档。接口逻辑实测：GET + `loadMoreId` 分页获取，`sortType` 必填；POST 返回 405、缺参数 400；网页登录态身份返回 errorCode 19004，实测无法拿到内容，面板如实报错不伪造。
 ## [未发布]
+
 
 ### 后续计划（3.0.0 之后）
 

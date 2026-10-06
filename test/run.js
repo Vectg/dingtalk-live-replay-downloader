@@ -30,7 +30,8 @@ section('extract（抽取器自检）');
     for (const name of ['sanitize', 'fmtBytes', 'parseTimeArg', 'clipSegments',
         'parseAttributes', 'fetchAndParseM3u8', 'fixMp4Duration', 'parseSpsToDims',
         'findSpsCandidates', 'boxIter', 'mergeBuffers', 'parseUrl',
-        'dockMount', 'aria2SegName', 'aria2Options', 'aria2BuildBatch', 'aria2Explain', 'aria2Plan']) {
+        'dockMount', 'aria2SegName', 'aria2Options', 'aria2BuildBatch', 'aria2Explain', 'aria2Plan',
+        'chatNormalize', 'chatToTxt', 'chatToJson', 'chatToCsv', 'chatToHtml', 'chatFormat']) {
         let code = '';
         try {
             code = extractFn(name);
@@ -1293,6 +1294,74 @@ section('智能调度');
         eq(p3.items.length, 1, '无 url 的条目被跳过');
     }
 
+    section('聊天记录导出格式化（v3.5.0）');
+    {
+        // 六个函数必须一起抽：chatFormat 自由引用 chatToXxx，
+        // 只抽 chatFormat 会让渲染函数报 ReferenceError（loadFns 把各名编译进同一个 factory）。
+        const { chatNormalize, chatFormat } = loadFns(
+            ['chatNormalize', 'chatToTxt', 'chatToJson', 'chatToCsv', 'chatToHtml', 'chatFormat']);
+
+        // 规范化: 多种字段名都要认, 无用户且无内容跳过, 时间戳 → 可读文本
+        const list = chatNormalize({ commentList: [
+            { createTime: 1700000000000, nick: '甲', content: '你好 "世界"' },
+            { gmtCreate: 1700000060, userName: '乙', text: '第二条' },
+            { nickname: '丙', message: '第三条' },
+            { name: '丁', commentContent: '第四条' },
+            { content: '' },
+            { user: '戊' }
+        ] });
+        eq(list.length, 4, '四条有效记录（空内容/错名字段被跳过）');
+        eq(list[0].user, '甲', 'nick 优先');
+        eq(list[0].text, '你好 "世界"', '引号原样保留，各格式自己转义');
+        eq(list[1].user, '乙', 'userName 认得');
+        eq(list[2].user, '丙', 'nickname 认得');
+        eq(list[3].text, '第四条', 'commentContent 认得');
+        eq(/2023/.test(list[0].time), true, '毫秒时间戳转可读时间: ' + list[0].time);
+        eq(/2023/.test(list[1].time), true, '秒级时间戳也认: ' + list[1].time);
+        eq(chatNormalize([]).length, 0, '空数组 → 空结果');
+        eq(chatNormalize({}).length, 0, '无字段 → 空结果');
+        eq(chatNormalize({ commentList: null }).length, 0, 'commentList 为 null → 空结果');
+        eq(chatNormalize({ comments: [{ userName: 'X', content: 'y' }] }).length, 1, 'comments 字段也认');
+        const l2 = chatNormalize({ commentList: [{ content: '只有内容' }] });
+        eq(l2[0].user, '匿名', '缺用户 → 匿名');
+        eq(l2[0].time, '', '缺时间 → 空串');
+        eq(l2[0].raw && l2[0].raw.content, '只有内容', 'raw 保留原字段');
+
+        const S = [{ time: '2023-11-15 06:13:20', user: '甲', text: 'a,b"c' }];
+        // .txt
+        const t = chatFormat('txt', S, { title: 'T' });
+        eq(t.ext, 'txt', 'txt 后缀');
+        eq(t.text.indexOf('\r\n') >= 0, true, 'txt 用 CRLF 换行');
+        eq(t.text.indexOf('[2023-11-15 06:13:20] 甲: a,b"c') >= 0, true, 'txt 逐条形式 [时间] 用户: 内容');
+        // .json
+        const j2 = chatFormat('json', S, { title: 'T' });
+        eq(j2.ext, 'json', 'json 后缀');
+        const back = JSON.parse(j2.text);
+        eq(back.count, 1, 'json 带条数');
+        eq(back.messages[0].user, '甲', 'json 含用户');
+        eq(back.title, 'T', 'json 合并 meta');
+        eq(typeof back.exportedAt, 'string', 'json 带导出时间');
+        eq(chatFormat('json', [], {}).text.indexOf('"count": 0') >= 0, true, '空列表 json 正常');
+        // .csv
+        const c = chatFormat('csv', S, {});
+        eq(c.ext, 'csv', 'csv 后缀');
+        eq(c.text.charCodeAt(0) === 0xFEFF, true, 'csv 带 BOM（Excel 中文不乱码）');
+        eq(c.text.indexOf('""c"') >= 0, true, 'csv 内嵌引号转义成两个');
+        eq(c.text.split('\r\n')[0].indexOf('时间') >= 0, true, 'csv 首行是表头');
+        // .html
+        const h = chatFormat('html', S, { title: '<T&>' });
+        eq(h.ext, 'html', 'html 后缀');
+        eq(h.text.indexOf('<!DOCTYPE html>') === 0, true, 'html 以 DOCTYPE 开头');
+        eq(h.text.indexOf('&lt;T&amp;&gt;') >= 0, true, 'html 标题被转义为 &lt;T&amp;&gt;');
+        eq(h.text.indexOf('<T&>') < 0, true, 'html 原样标题不再出现');
+        eq(h.text.indexOf('charset="utf-8"') >= 0, true, 'html 声明 charset');
+        eq(h.text.indexOf('<td class="u">甲</td>') >= 0, true, 'html 有用户单元格');
+        eq(h.text.indexOf('共 1 条') >= 0, true, 'html 带总条数');
+        eq(chatFormat('html', [], {}).text.indexOf('共 0 条') >= 0, true, '空列表 html 正常');
+        // 未知/缺省格式 → 回退 txt，不崩溃
+        eq(chatFormat('bogus', S, {}).ext, 'txt', '未知格式回退 txt');
+        eq(chatFormat(undefined, [], {}).ext, 'txt', 'undefined 格式回退 txt');
+    }
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
