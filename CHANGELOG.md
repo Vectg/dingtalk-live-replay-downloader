@@ -3,6 +3,10 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.5.2] - 2026-10-06
+### 变更
+- 内嵌态的拖动调高把手从面板**底边**移到**顶边** (不必再探到面板底部); 拖动语义不变 —— 往下拖变高, 高度范围 / 持久化逻辑不变. 悬浮态下把手本就只对内嵌态生效, 现在直接隐藏, 顺带让出悬浮标题栏顶部的拖动区域.
+
 ## [3.5.1] - 2026-10-06
 ### 移除
 - 「⬇ 发送到 aria2」按钮及其整条点击逻辑: 更多设置的「下载交给 aria2」总开关打开后, 点「下载本页回放」与队列任务已全部交由本机 aria2 执行, 独立按钮成为冗余入口. aria2 区块 (主机 / 端口 / 密钥 / 保存目录 / 测试连接) 不受影响.
@@ -804,7 +808,8 @@
 tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界与其它版本一致.
 [3.5.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.4.0...v3.5.0
 [3.5.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.0...v3.5.1
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...HEAD
+[3.5.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.1...v3.5.2
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...HEAD
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1

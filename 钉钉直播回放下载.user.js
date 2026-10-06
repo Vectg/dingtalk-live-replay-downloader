@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.5.1
+// @version      3.5.2
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画。
 // @author       agent
 // @license      MIT
@@ -1679,13 +1679,15 @@
            收起态 0fr 被顶开后面板实测高达 629px、直接吃满整条侧栏。 */
         #dlr-panel.docked .bin{max-height:none}
         #dlr-panel.docked.mini .body{height:auto;max-height:none;min-height:0}
-        #dlr-dock-resize{position:absolute;left:0;right:0;bottom:-5px;height:10px;
+        #dlr-dock-resize{position:absolute;left:0;right:0;top:0;height:10px;
             cursor:ns-resize;z-index:6;touch-action:none;user-select:none;-webkit-user-select:none}
-        #dlr-dock-resize::after{content:'';position:absolute;left:50%;bottom:2px;
+        #dlr-dock-resize::after{content:'';position:absolute;left:50%;top:3px;
             transform:translateX(-50%);width:34px;height:3px;border-radius:2px;
             background:#4a5160;transition:background 150ms ease}
         #dlr-dock-resize:hover::after{background:#3d6eff}
         #dlr-panel.docked.mini #dlr-dock-resize{display:none}
+        /* 悬浮态高度随内容自适应, 把手无效: 隐藏, 顺带让出标题栏顶部的拖动区域 (v3.5.2) */
+        #dlr-panel:not(.docked) #dlr-dock-resize{display:none}
         #dlr-panel.docked.mini .body{width:100%}
         /* aria2 区块 (v3.3.0, 实验性): 主机/端口/密钥/目录 + 状态行 + 测试按钮 */
         #dlr-aria2-box{margin:6px 0;padding:6px 8px;border:1px solid #23262e;border-radius:6px}
@@ -4262,7 +4264,7 @@
             const savedH = parseInt(GM_getValue('dlr_dock_h'), 10);
             if (isFinite(savedH) && savedH >= DOCK_MIN_H) applyDockHeight(savedH);
         } catch (e) { }
-        // 拖动底边改高度。pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
+        // 拖动把手改高度 (v3.5.2 起把手位于面板顶边; 底边跟随指针, 下拖 = 变高); pointer 事件同时覆盖鼠标/触屏, setPointerCapture 保证
         // 指针拖出把手范围也不丢事件。
         const rz = $('dlr-dock-resize');
         if (rz) {
@@ -4656,4 +4658,5 @@
         init();
     }
 })();
+
 
