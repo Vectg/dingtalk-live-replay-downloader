@@ -1454,6 +1454,25 @@ section('智能调度');
             '别的 ❌ 文案不被误剥');
     }
 
+    section('日志文案空格与空格快捷键（v3.6.4）');
+    {
+        // v2.6.3 的标点替换把字符串字面量里的空格一并吃掉了（' ' → ''），
+        // v3.0.8 回滚光环时又把 v3.0.6 修好的空格快捷键带回了 k === ''.
+        // 这些都是内联代码，抽取器切不出来，直接锁源码字面量。
+        const { SRC_PATH } = require('./extract.js');
+        const raw = fs.readFileSync(SRC_PATH, 'utf8');
+        ok(raw.indexOf("if (k === ' ' || k === 'Spacebar')") >= 0, '空格快捷键认 e.key === \' \'');
+        ok(raw.indexOf("if (k === '' || k === 'Spacebar')") < 0, '空格快捷键不再比较空串');
+        ok(raw.indexOf("const line = t + '  ' + String(msg);") >= 0, '日志行时间戳后有空格');
+        ok(raw.indexOf("L.push(k.padEnd(14, ' ') + ': ' + v);") >= 0, '诊断报告键名用空格补齐');
+        ok(raw.indexOf("new Error('HTTP ' + r.status + ' '") >= 0, 'HTTP 错误码前后有空格');
+        ok(raw.indexOf("setStatus('❌ ' + e.message, true);") >= 0, '❌ 后有空格');
+        ok(raw.indexOf("' · ' + fmtSpeed(speedBps)") >= 0, '进度标签 · 两侧有空格');
+        ok(raw.indexOf("map((i) => '#' + i).join(' ')") >= 0, '失败片编号用空格分隔');
+        ok(!/\+ '  (个|行|条|次|片)/.test(raw), '量词前不再是双空格');
+        ok(!/\('' \+ /.test(raw), '没有残留的 (\'\' + 前缀');
+    }
+
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告

@@ -3,6 +3,15 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.6.4] - 2026-10-25
+### 修复
+- **日志/状态文案里的空格被吃掉或重复**: v2.6.3 (`4330375`) 统一面板标点时, 替换规则把字符串字面量里的空格一并改坏了约 77 处 —— 有的空格被删 (`'HTTP '` → `'HTTP'`, `'❌ '` → `'❌'`, 诊断报告的缩进与 `padEnd` 对齐失效), 有的被加倍 (`' 个'` → `'  个'`). 表现为日志、诊断报告、状态栏文字挤在一起或多出空格. 已按该提交的 diff 逐处还原, 期间引入的英文标点保持不变.
+- **空格快捷键再次失效**: 同一次替换把 `k === ' '` 改成了 `k === ''`, 按空格既不开始下载也不暂停. 已恢复.
+- **光环进度描边断开**: `stroke-dasharray` 的两个数值之间的空格被删, 值变成一个数, 描边不再按进度分段. 已恢复.
+- **重复光环 SVG**: 脚本若被多次注入（如开发时重复 eval），`init()` 会创建多个 `#dlr-ring`，导致两个光环叠加. 已加守卫，已存在 `#dlr-ring` 时直接返回.
+### 测试
+- 补 10 条断言锁住上述字面量 (519 条).
+
 ## [3.6.3] - 2026-10-07
 ### 变更
 - **脚本内中文句号统一为英文句号**: `.user.js` 内 339 处 `。` 全部改为 `.`, 并按 README 的既定标准补上句号后的英文空格 (52 处). 全角逗号/顿号/冒号/分号/括号保持不变 —— 中文正文里它们是正常排版, 只有句号是用户明确不要的那个. 339 处里 287 处是纯注释行, 30 处在多行块注释的续行里 (CSS 注释), 另有 6 处是面板 `title` 提示与状态文案里的用户可见中文句子, 一并统一. `@description` 里的功能列表同样只换了句号, 顿号分隔保留.
@@ -842,7 +851,10 @@ tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界
 [3.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...v3.6.0
 [3.5.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...v3.5.3
-[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.1...HEAD
+[未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.3...HEAD
+[3.6.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.3...v3.6.4
+[3.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.2...v3.6.3
+[3.6.2]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.1...v3.6.2
 [3.3.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.2.1...v3.3.0
 [3.4.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.1...v3.4.0
 [3.3.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.3.0...v3.3.1

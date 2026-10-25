@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.3
+// @version      3.6.4
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画.
 // @author       agent
 // @license      MIT
@@ -78,7 +78,7 @@
         const t = String(now.getHours()).padStart(2, '0') + ':' +
             String(now.getMinutes()).padStart(2, '0') + ':' +
             String(now.getSeconds()).padStart(2, '0');
-        const line = t + '' + String(msg);
+        const line = t + '  ' + String(msg);
         if (!statusEl) {
             logBuffer.push(line);
             if (logBuffer.length > 200) logBuffer.shift();
@@ -112,7 +112,7 @@
         const r = (e && e.reason) || {};
         DIAG.errors.push({
             t: new Date().toISOString(),
-            msg: '未处理的 Promise 拒绝:' + String(r && r.message ? r.message : r).slice(0, 300),
+            msg: '未处理的 Promise 拒绝: ' + String(r && r.message ? r.message : r).slice(0, 300),
             src: '', line: 0,
         });
         if (DIAG.errors.length > 50) DIAG.errors.shift();
@@ -135,7 +135,7 @@
 
     function buildDiagReport() {
         const L = [];
-        const push = (k, v) => L.push(k.padEnd(14, '') + ':' + v);
+        const push = (k, v) => L.push(k.padEnd(14, ' ') + ': ' + v);
         push('脚本版本', VERSION);
         push('生成时间', new Date().toLocaleString('zh-CN'));
         push('页面地址', redactUrl(location.href));
@@ -146,12 +146,12 @@
         L.push('');
 
         // —— 下载历史 ——
-        L.push('【下载记录】共 ' + DIAG.runs.length + '  次');
+        L.push('【下载记录】共 ' + DIAG.runs.length + ' 次');
         if (!DIAG.runs.length) L.push('   (本次会话没有点过下载)');
         DIAG.runs.forEach((r, i) => {
-            L.push('' + (i + 1) + '.' + r.t.replace('T', '').slice(0, 19) +
-                '' + (r.ok ? '成功' : '失败') + '' + r.summary);
-            if (r.detail) L.push('' + r.detail);
+            L.push('  ' + (i + 1) + '. ' + r.t.replace('T', ' ').slice(0, 19) +
+                '  ' + (r.ok ? '成功' : '失败') + '  ' + r.summary);
+            if (r.detail) L.push('     ' + r.detail);
         });
         L.push('');
 
@@ -169,7 +169,7 @@
             if (pc.variants && pc.variants.length) {
                 L.push('  多码率档位:');
                 pc.variants.forEach((v) => {
-                    L.push('' + (v.res || '未标注') + '' + v.bandwidth + ' bps');
+                    L.push('    ' + (v.res || '未标注') + '  ' + v.bandwidth + ' bps');
                 });
             }
         }
@@ -178,7 +178,7 @@
         // —— 缓存与设置 ——
         L.push('【缓存与设置】');
         const cached = partial && partial.datas ? partial.datas.filter(Boolean).length : 0;
-        push('  内存缓存', partial ? (cached + ' 片 ' + (partial.key ? '' : ' (key 不匹配)')) : '无');
+        push('  内存缓存', partial ? (cached + ' 片' + (partial.key ? '' : ' (key 不匹配)')) : '无');
         push('  后台预下载', pre.datas
             ? (pre.want + '/' + pre.total + ' 片 · ' + fmtBytes(pre.bytes) +
                (pre.running ? ' (进行中)' : (pre.stop ? ' (已中断)' : '')) +
@@ -198,15 +198,15 @@
         L.push('');
 
         // —— 未捕获异常 ——
-        L.push('【未捕获异常】共 ' + DIAG.errors.length + '  条');
+        L.push('【未捕获异常】共 ' + DIAG.errors.length + ' 条');
         if (!DIAG.errors.length) L.push('   (无)');
         DIAG.errors.forEach((e) => {
-            L.push('' + e.t.replace('T', '').slice(0, 19) + '' + e.msg);
-            if (e.src) L.push('' + e.src + ':' + e.line);
+            L.push('  ' + e.t.replace('T', ' ').slice(0, 19) + '  ' + e.msg);
+            if (e.src) L.push('     ' + e.src + ':' + e.line);
         });
         L.push('');
-        L.push('【面板日志】最近 ' + logHistory.length + '  条');
-        logHistory.slice(-80).forEach((l) => L.push('' + l));
+        L.push('【面板日志】最近 ' + logHistory.length + ' 条');
+        logHistory.slice(-80).forEach((l) => L.push('  ' + l));
         L.push('');
         L.push('—— 报告结束 ——');
         return L.join('\n');
@@ -219,7 +219,7 @@
             logBuffer.push(isErr ? raw + ' (面板未挂载)' : raw);
             return;
         }
-        pushHistory((isErr ? '❌' : '') + raw);
+        pushHistory((isErr ? '❌ ' : '') + raw);
         if (statusEl.classList.contains('hist')) return;   // 展开态由 pushHistory 渲染
         // 用 textContent/DOM 构造，不走 innerHTML —— 从根上免去 HTML 转义
         statusEl.textContent = '';
@@ -244,7 +244,7 @@
                 anonymous: false,
                 onload: (r) => {
                     if (r.status >= 200 && r.status < 300) resolve(r);
-                    else reject(new Error('HTTP' + r.status + '' + (r.response || '').toString().slice(0, 200)));
+                    else reject(new Error('HTTP ' + r.status + ' ' + (r.response || '').toString().slice(0, 200)));
                 },
                 onerror: (e) => reject(new Error('网络错误 ' + (e.error || ''))),
                 ontimeout: () => reject(new Error('请求超时')),
@@ -505,7 +505,7 @@
         try {
             ret = new Function(src + '\n;return typeof muxjs !== "undefined" ? muxjs : undefined;')();
         } catch (e) {
-            throw new Error('mux.js 执行失败 (可能被页面 CSP 拦截):' + e.message);
+            throw new Error('mux.js 执行失败 (可能被页面 CSP 拦截): ' + e.message);
         }
         muxGlobal = ret || pickMux();
         if (!muxGlobal || !muxGlobal.mp4) throw new Error('mux.js 加载失败 (未取得 mp4.Transmuxer)');
@@ -669,7 +669,7 @@
             return u8;
         } catch (e) {
             // 修补失败不影响产出文件（ffprobe 类播放器会重算），记录但不中断
-            try { appendLog('   ⚠ MP4 duration 修补失败:' + e.message); } catch (e2) { }
+            try { appendLog('   ⚠ MP4 duration 修补失败: ' + e.message); } catch (e2) { }
             return u8;
         }
     }
@@ -780,7 +780,7 @@
                 else appendLog('   找不到分辨率 ' + wantRes + ', 回落最高带宽 ' + pick.bandwidth + ' bps');
             }
             appendLog('   多码率 ' + variants.length + ' 档, 选择 ' +
-                (pick.res || '未标注分辨率') + ' ·' + pick.bandwidth + ' bps');
+                (pick.res || '未标注分辨率') + ' · ' + pick.bandwidth + ' bps');
             const inner = await fetchAndParseM3u8(pick.url, depth + 1, '');
             inner.variants = variants;   // 供分辨率下拉框填充
             return inner;
@@ -1496,7 +1496,7 @@
             const keyBytes = await getKeyBytes(seg.key, keyCache);
             bytes = await aesDecrypt(bytes, keyBytes, keyIv(seg.key.iv, seg.sequence));
         } else if (seg.key && seg.key.method && seg.key.method !== 'NONE') {
-            throw new Error('不支持的 HLS 加密方式:' + seg.key.method);
+            throw new Error('不支持的 HLS 加密方式: ' + seg.key.method);
         }
         return { bytes, end: consumedEnd };
     }
@@ -1634,7 +1634,7 @@
             border-color:#2f3542;scrollbar-width:thin}
         #dlr-status.hist::after{content:'— 点击收起 —';display:block;text-align:center;
             color:#5a5f6b;font-size:10px;margin-top:4px}
-        #dlr-status:not(.hist)::before{content:'🕘';opacity:.55}
+        #dlr-status:not(.hist)::before{content:'🕘 ';opacity:.55}
         #dlr-panel .err{color:#ff7a7a}
         /* 面板内嵌侧栏 (v3.2.0, 实验性): 面板是页签条父容器的流内最后一个子块,
            几何全交给 CSS —— 不用 JS 追 (v3.0.9 教训). 页签固定在上方永不被遮挡,
@@ -2630,8 +2630,8 @@
         appendLog('① CSRF token (' + token.slice(0, 8) + '...)');
         appendLog('② 获取播放地址 getOpenLiveInfoV2 ...');
         const model = await getPlayback(roomId, liveUuid, token);
-        appendLog('   标题:' + model.title +
-            '  时长:' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知'));
+        appendLog('   标题: ' + model.title +
+            '  时长: ' + (model.playbackDuration ? (model.playbackDuration / 1000).toFixed(1) + 's' : '未知'));
         appendLog('③ 拉取 m3u8 ...');
         const parsed = await fetchAndParseM3u8(model.playbackUrl, 0, wantRes);
         if (parsed.totalDur) {
@@ -2647,11 +2647,11 @@
                 resInfo = await probeResolution(parsed.segments[0].url);
                 if (resInfo) {
                     const profiles = { 77: 'Main', 66: 'Baseline', 100: 'High' };
-                    const profile = profiles[resInfo.profileIdc] || ('profile' + resInfo.profileIdc);
+                    const profile = profiles[resInfo.profileIdc] || ('profile ' + resInfo.profileIdc);
                     appendLog('   原始分辨率 ' + resInfo.width + '×' + resInfo.height +
-                        ' (H.264' + profile + ' @' + (resInfo.levelIdc / 10).toFixed(1) + ')');
+                        ' (H.264 ' + profile + ' @' + (resInfo.levelIdc / 10).toFixed(1) + ')');
                 }
-            } catch (e) { appendLog('   ⚠ 分辨率探测失败:' + e.message); }
+            } catch (e) { appendLog('   ⚠ 分辨率探测失败: ' + e.message); }
         }
         prepCache = { key, at: Date.now(), token, model, parsed, resInfo };
         // 解析完成即后台预下载切片（v2.7.0）. 不 await：解析阶段就该返回，
@@ -2844,7 +2844,7 @@
             const raw = ln.trim();
             if (!raw || raw.startsWith('#')) return;
             try {
-                const r = parseQueueLine(raw, '第 ' + (i + 1) + '  行');
+                const r = parseQueueLine(raw, '第 ' + (i + 1) + ' 行');
                 out.push({ roomId: r.roomId, liveUuid: r.liveUuid });
             } catch (e) {
                 errs.push(e.message);
@@ -2865,7 +2865,7 @@
             // 留空 = 用回放标题；填了则优先，并自动去掉误带的后缀
             const autoName = safeName(model.title, liveUuid);
             const baseName = safeName(opts.name, autoName);
-            appendLog('   文件名:' + baseName);
+            appendLog('   文件名: ' + baseName);
             progressSet(P.prep, '准备');
 
             // 截取：按时间区间筛切片（HLS 按切片边界对齐，非帧级精确）
@@ -2882,8 +2882,8 @@
             const frameClipUsable = frameClipWanted && !parsed.fmp4 && opts.clipFrom !== null;
             const segs = frameClipUsable ? parsed.segments : clip.segs;
             if (clip.range) {
-                appendLog('   ✂ 截取 ' + fmtTime(clip.range.from) + ' ~' + fmtTime(clip.range.to) +
-                    ' → 切片对齐到 ' + fmtTime(clip.range.first) + ' ~' + fmtTime(clip.range.last) +
+                appendLog('   ✂ 截取 ' + fmtTime(clip.range.from) + ' ~ ' + fmtTime(clip.range.to) +
+                    ' → 切片对齐到 ' + fmtTime(clip.range.first) + ' ~ ' + fmtTime(clip.range.last) +
                     ' (' + clip.segs.length + '/' + parsed.segments.length + ' 切片)' +
                     (clip.range.clamped ? '; 结束时间超出总时长, 已自动截到回放末尾' : ''));
             }
@@ -2927,7 +2927,7 @@
                 lastRunResult = { ok: r.failed === 0, name: '' };
                 return;
             }
-            appendLog('   切片数:' + segs.length +
+            appendLog('   切片数: ' + segs.length +
                 (parsed.encrypted ? '   AES-128 加密' : '') +
                 (parsed.fmp4 ? '   fMP4' : '   TS'));
             // 体积预估：Range 拉首片 1 字节读 Content-Range → 单片 × 片数
@@ -2938,7 +2938,7 @@
                     if (one > 0) {
                         estTotal = one * segs.length;
                         appendLog('   预计体积: 约 ' + fmtBytes(estTotal) +
-                            ' (单片 ' + fmtBytes(one) + ' ×' + segs.length + ' 片)');
+                            ' (单片 ' + fmtBytes(one) + ' × ' + segs.length + ' 片)');
                     }
                 } catch (e) { /* 预估失败静默 */ }
             }
@@ -2978,7 +2978,7 @@
                     if (partial.datas[i]) { datas[i] = partial.datas[i]; resumed++; resumedBytes += datas[i].length; }
                 }
                 if (resumed) {
-                    appendLog('   ♻ 命中断点缓存, 已恢复 ' + resumed + '/' + segs.length + '  个切片');
+                    appendLog('   ♻ 命中断点缓存, 已恢复 ' + resumed + '/' + segs.length + ' 个切片');
                     // 上次留下的失败片号（若有）继续沿用，让「只重试」按钮跨轮次保持可见
                     const stillMissing = [];
                     for (let i = 0; i < segs.length; i++) if (!datas[i]) stillMissing.push(i + 1);
@@ -3001,7 +3001,7 @@
                             for (let i = 0; i < segs.length; i++) if (!datas[i]) missing.push(i + 1);
                             lastFailed = missing.length ? missing : null;
                             appendLog('   ♻ 命中跨会话断点缓存 (IndexedDB), 已恢复 ' +
-                                resumed + '/' + segs.length + '  个切片');
+                                resumed + '/' + segs.length + ' 个切片');
                         }
                     }
                 } catch (e) { /* IDB 不可用则静默走全新下载 */ }
@@ -3027,8 +3027,8 @@
                 const avg = done ? gotBytes / (done - resumed) || 0 : 0;
                 const eta = (speedBps > 0 && avg > 0) ? Math.round((avg * remain) / speedBps) : null;
                 let label = '切片 ' + done + '/' + segs.length;
-                if (estTotal) label += ' ·' + fmtBytes(haveBytes) + '/' + fmtBytes(estTotal);
-                if (speedBps > 0) label += ' ·' + fmtSpeed(speedBps);
+                if (estTotal) label += ' · ' + fmtBytes(haveBytes) + '/' + fmtBytes(estTotal);
+                if (speedBps > 0) label += ' · ' + fmtSpeed(speedBps);
                 if (eta !== null && eta >= 0 && remain > 0) label += ' · 剩 ' + fmtTime(eta);
                 if (DL.pause) label += ' · 已暂停';
                 progressSet(P.dlStart + (done / segs.length) * span, label);
@@ -3105,7 +3105,7 @@
                             done++;
                             if (gov) gov.note(got.bytes.length);
                             updProgress();
-                            if (done % 10 === 0 || done === segs.length) appendLog('' + done + '/' + segs.length);
+                            if (done % 10 === 0 || done === segs.length) appendLog('   ' + done + '/' + segs.length);
                             lastErr = null;
                             break;
                         } catch (e) {
@@ -3159,10 +3159,10 @@
                 partial = { key: dlKey, datas: datas.slice(), failed: failures.slice() };
                 lastFailed = failures.map((f) => f.index);
                 try { await idbPutPartial(dlKey, datas); } catch (e) { }
-                appendLog('❌' + failures.length + '/' + segs.length + ' 切片失败: #' + first.index + '' + first.reason);
+                appendLog('❌ ' + failures.length + '/' + segs.length + ' 切片失败: #' + first.index + ' ' + first.reason);
                 appendLog('   好片 ' + (segs.length - failures.length) + ' 片已保留为断点缓存,' +
-                    '点"下载本页回放"只重试这 ' + failures.length + '  片');
-                throw new Error(failures.length + '/' + segs.length + ' 切片失败 (#' + first.index + '' + first.reason + '). 建议:' + advice);
+                    '点"下载本页回放"只重试这 ' + failures.length + ' 片');
+                throw new Error(failures.length + '/' + segs.length + ' 切片失败 (#' + first.index + ' ' + first.reason + '). 建议:' + advice);
             }
             // 完整性校验：数量齐全、非空、TS 同步字节对齐（fMP4 不适用）.
             // 不硬性要求 d[0]===0x47——真实切片可能带 ID3/填充前缀（probeResolution
@@ -3191,7 +3191,7 @@
             if (badIdx.length) {
                 // 问题切片置空：好片保留为断点缓存（内存+IDB），重下只补这些
                 try { await idbPutPartial(dlKey, datas); } catch (e) { }
-                const list = badIdx.map((i) => '#' + i).join('');
+                const list = badIdx.map((i) => '#' + i).join(' ');
                 partial = { key: dlKey, datas: datas.slice(), failed: badIdx.map((i) => ({
                     index: i, reason: '内容异常 (空或非 TS 结构)' })) };
                 lastFailed = badIdx.slice();
@@ -3202,7 +3202,7 @@
             }
             const okBytes = datas.reduce((s, d) => s + (d ? d.length : 0), 0);
             appendLog('   ✅ 完整性校验通过:' + segs.length + '/' + segs.length +
-                ' 片 ·' + fmtBytes(okBytes) +
+                ' 片 · ' + fmtBytes(okBytes) +
                 (parsed.fmp4 ? ' · fMP4' : ' · TS 同步字节正常'));
             partial = null;   // 全部下载成功，断点缓存失效
             try { await idbClearPartial(); } catch (e) { }
@@ -3222,7 +3222,7 @@
                     const r = clipFrames(datas, segs, segStarts, fromMs, toMs);
                     frameClipped = r;
                     appendLog('   ✂ 帧级对齐到关键帧:' + fmtTime(r.startKeyframeSec) +
-                        ' 起, 共 ' + r.keyframes + ' 个关键帧可选 ' +
+                        ' 起, 共 ' + r.keyframes + ' 个关键帧可选' +
                         (r.injectedParams ? ' (已注入 SPS/PPS)' : ''));
                 } catch (e) {
                     appendLog('   ⚠ 帧级截取失败 (' + e.message + '), 已退回切片对齐结果');
@@ -3243,7 +3243,7 @@
                     // 同样可能带 0xFFFFFFFF duration，一并修补
                     const fixed = fixMp4Duration(mergeBuffers([init, ...outParts]));
                     blob = new Blob([fixed], { type: 'video/mp4' });
-                    appendLog('   fMP4 直接拼接成功 (init +' + datas.length + ' 分片)');
+                    appendLog('   fMP4 直接拼接成功 (init + ' + datas.length + ' 分片)');
                 } catch (e) {
                     note = ' (fMP4 初始化段下载失败:' + e.message + ', 已输出分片部分)';
                     blob = new Blob(outParts, { type: 'video/mp4' });
@@ -3260,7 +3260,7 @@
             } else {
                 blob = new Blob(outParts, { type: 'video/MP2T' });
             }
-            if (note) appendLog('' + note);
+            if (note) appendLog('   ' + note);
             appendLog('   生成 ' + (blob.size / 1048576).toFixed(1) + ' MB');
 
             progressSet(P.save, '保存');
@@ -3268,9 +3268,9 @@
             await downloadBlob(blob, outName);
             setStatus('✅ 完成:' + outName + ' (已存入浏览器默认下载文件夹)');
             progressDone(true);
-            diagRun(true, outName + ' · ' + fmtBytes(blob.size) + ' · ' + segs.length + '  片');
+            diagRun(true, outName + ' · ' + fmtBytes(blob.size) + ' · ' + segs.length + ' 片');
             lastRunResult = { ok: true, name: outName };
-            notify('钉钉回放下载完成', outName + ' ·' + fmtBytes(blob.size), true);
+            notify('钉钉回放下载完成', outName + ' · ' + fmtBytes(blob.size), true);
         } catch (err) {
             setStatus('❌ 失败:' + err.message, true);
             progressDone(false);
@@ -3298,6 +3298,8 @@
 
     // ---------- 初始化（等 body 就绪再挂载） ----------
     function init() {
+        // Prevent duplicate initialization (e.g. from re-injection during development)
+        if (document.getElementById('dlr-ring')) return;
         document.body.appendChild(panel);
         try { syncFloatMaxH(panel); } catch (e) { }   // 入 DOM 后才量得到真实 rect
         // 下载光环是独立 SVG 层，挂在 body 下而非面板内部，
@@ -3369,7 +3371,7 @@
                 // 是字符串拼接：'533.1' + '1370.8' → '533.11370.8'，浏览器只解析出
                 // 单个数 533.113（第二个小数点处截断），于是实际是「533px 实线 + 0.8px 缝」，
                 // 绕一圈几乎全亮、根本看不出光带在流动.
-                ringBeam.setAttribute('stroke-dasharray', seg + ',' + (perim - seg));
+                ringBeam.setAttribute('stroke-dasharray', seg + ', ' + (perim - seg));
                 ringBeam.style.strokeDashoffset = '0';
                 ringBeam.style.setProperty('--ring-perim', perim + 'px');
             }
@@ -3606,7 +3608,7 @@
             // 播放列表声明的档位（最准确，带码率）
             const declared = (variants || []).filter((v) => v.res);
             declared.forEach((v) => {
-                addOpt(v.res, v.res + ' ·' + Math.round(v.bandwidth / 1000) + ' kbps');
+                addOpt(v.res, v.res + ' · ' + Math.round(v.bandwidth / 1000) + ' kbps');
             });
             // 常用档位里还没出现过的（≤ 原始分辨率）也列出来，方便一键降档
             COMMON_RES.forEach((c) => {
@@ -3640,7 +3642,7 @@
                 try {
                     normalized = parseResInput(typed);
                 } catch (e) {
-                    setStatus('❌' + e.message, true);
+                    setStatus('❌ ' + e.message, true);
                     resSel.value = lastValidRes;
                     return;
                 }
@@ -3679,9 +3681,9 @@
                 prep(p.roomId, p.liveUuid, picked).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
                     if (fillResOptions) fillResOptions(prepCache.parsed.variants, prepCache.resInfo);
-                    const res = prepCache.parsed.segments.length + '  个切片';
+                    const res = prepCache.parsed.segments.length + ' 个切片';
                     const pickedLabel = picked ? ',' + picked : '';
-                    setStatus('✅ 就绪 ·' + (prepCache.model.title || '未命名') +
+                    setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
                         ' · ' + res + pickedLabel + ', 可开始下载');
                 }).catch((e) => setStatus('⚠ 预取失败:' + e.message, true));
             }
@@ -3735,7 +3737,7 @@
                         const v = await remoteVersion();
                         if (compareVersions(v, VERSION) > 0) {
                             showFound(v);
-                            setStatus('🔄 发现新版 ' + v + ' (当前 ' + VERSION + ' ), 点击"发现新版"跳转下载页');
+                            setStatus('🔄 发现新版 ' + v + ' (当前 ' + VERSION + '), 点击"发现新版"跳转下载页');
                         } else {
                             setStatus('✅ 已是最新版 v' + VERSION + ' (更新源:' + label + ')');
                             setUpd('已是最新');
@@ -3759,7 +3761,7 @@
         const fetchVer = (url) => new Promise((res, rej) => {
             GM_xmlhttpRequest({
                 url, method: 'GET',
-                onload: (r) => (r.status >= 200 && r.status < 300) ? res(r.responseText) : rej(new Error('HTTP' + r.status)),
+                onload: (r) => (r.status >= 200 && r.status < 300) ? res(r.responseText) : rej(new Error('HTTP ' + r.status)),
                 onerror: () => rej(new Error('网络错误')),
                 ontimeout: () => rej(new Error('超时')),
             });
@@ -3798,18 +3800,18 @@
         };
         const quietLog = (msg) => {
             const d = new Date(), p = (n) => String(n).padStart(2, '0');
-            pushHistory(p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '' + msg);
+            pushHistory(p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '  ' + msg);
             };
         const showFound = (v) => {
             UPD.found = v;
             setUpd('发现新版 ' + v + ' ↑', true);
-            upd.title = '发现新版 ' + v + ' (当前 ' + VERSION + ' ), 点击打开更新页';
+            upd.title = '发现新版 ' + v + ' (当前 ' + VERSION + '), 点击打开更新页';
             };
         // 点击：空闲=检查；已发现新版=跳转下载页；检查中=忽略
         upd.addEventListener('click', async () => {
             if (UPD.busy) return;
             if (UPD.found) {
-                setStatus('🔄 已打开更新页 v' + UPD.found + ' (当前 ' + VERSION + ' ), 在油猴里确认更新即可');
+                setStatus('🔄 已打开更新页 v' + UPD.found + ' (当前 ' + VERSION + '), 在油猴里确认更新即可');
                 window.open(updatePageUrl(), '_blank');
                 return;
             }
@@ -3820,7 +3822,7 @@
                 const v = await remoteVersion();
                 if (compareVersions(v, VERSION) > 0) {
                     showFound(v);
-                    setStatus('🔄 发现新版 ' + v + ' (当前 ' + VERSION + ' ), 点击"发现新版"跳转下载页');
+                    setStatus('🔄 发现新版 ' + v + ' (当前 ' + VERSION + '), 点击"发现新版"跳转下载页');
                 } else {
                     setStatus('✅ 已是最新版 v' + VERSION);
                     setUpd('已是最新');
@@ -3833,7 +3835,7 @@
             } finally {
                 UPD.busy = false;
                 upd.title = UPD.found
-                    ? ('发现新版 ' + UPD.found + ' , 点击打开更新页')
+                    ? ('发现新版 ' + UPD.found + ', 点击打开更新页')
                     : '检查更新; 发现新版后点击跳转下载页';
             }
         });
@@ -3847,7 +3849,7 @@
                     const v = await remoteVersion();
                     if (compareVersions(v, VERSION) > 0) {
                         showFound(v);
-                        quietLog('🔄 自动检查: 发现新版 ' + v + ' (当前 ' + VERSION + ' ), 点击"发现新版"跳转下载页');
+                        quietLog('🔄 自动检查: 发现新版 ' + v + ' (当前 ' + VERSION + '), 点击"发现新版"跳转下载页');
                     } else {
                         quietLog('检查更新: 已是最新版 v' + VERSION);
                     }
@@ -3986,9 +3988,9 @@
             if (!show) return;
             const info = $('dlr-retry-info');
             if (info) {
-                const head = lastFailed.slice(0, 12).map((i) => '#' + i).join('');
+                const head = lastFailed.slice(0, 12).map((i) => '#' + i).join(' ');
                 info.textContent = '上次失败 ' + n + ' 片 (' + head +
-                    (n > 12 ? '...' : '') + ' ), 其余切片已缓存';
+                    (n > 12 ? ' ...' : '') + '), 其余切片已缓存';
             }
         };
         window.__renderRetryRow = renderRetryRow;   // 供下载流程在状态变化时刷新
@@ -4040,7 +4042,7 @@
                 const blob = new Blob([text], { type: 'application/vnd.apple.mpegurl;charset=utf-8' });
                 await downloadBlob(blob, filename);
                 const n = prepCache.parsed.segments.length;
-                appendLog('📄 已导出 m3u8:' + filename + ' (' + n + ' 片 ' +
+                appendLog('📄 已导出 m3u8:' + filename + ' (' + n + ' 片' +
                     (prepCache.parsed.encrypted ? ' · AES-128' : '') +
                     (prepCache.parsed.fmp4 ? ' · fMP4' : '') + ')');
                 setStatus('📄 已导出 ' + filename + ' (' + n + ' 片)');
@@ -4187,8 +4189,8 @@
             const n = out.length;
             qRow.style.display = (n || errs.length) ? 'flex' : 'none';
             if (!n && !errs.length) return;
-            let msg = n ? (n + '  个回放待下载') : '';
-            if (errs.length) msg += (msg ? ';' : '') + errs.length + '  行无法识别';
+            let msg = n ? (n + ' 个回放待下载') : '';
+            if (errs.length) msg += (msg ? ';' : '') + errs.length + ' 行无法识别';
             if (qInfo) qInfo.textContent = msg;
         };
         qBox && qBox.addEventListener('input', renderQueue);
@@ -4532,7 +4534,7 @@
                 e.preventDefault();
                 return;
             }
-            if (k === '' || k === 'Spacebar') {
+            if (k === ' ' || k === 'Spacebar') {
                 // 空格：空闲时开始下载；下载中暂停/继续（同一键随状态切换）
                 if (DL.running) {
                     const p = $('dlr-pause');
@@ -4559,7 +4561,7 @@
         const setClipTip = (durText) => {
             const tip = $('dlr-clip-tip');
             if (!tip) return;
-            tip.textContent = durText ? durText + '' : '';
+            tip.textContent = durText ? durText + ' ' : '';
             const a = document.createElement('a');
             a.href = '#';
             a.id = 'dlr-open-frameclip';
@@ -4602,7 +4604,7 @@
             const { out, errs } = parseQueueInput(qBox.value);
             if (errs.length) {
                 appendLog('⚠ 队列有 ' + errs.length + ' 行无法识别:');
-                errs.slice(0, 5).forEach((m) => appendLog('' + m));
+                errs.slice(0, 5).forEach((m) => appendLog('   ' + m));
                 if (!out.length) { setStatus('❌ 队列里没有可执行的回放', true); return; }
             }
             if (!out.length) { setStatus('⚠ 队列为空', true); return; }
@@ -4615,15 +4617,15 @@
             const btn = $('dlr-go');
             if (btn) btn.disabled = true;
             const okList = [], failList = [];
-            appendLog('▶ 队列开始: 共 ' + Q.items.length + '  个回放, 顺序执行');
+            appendLog('▶ 队列开始: 共 ' + Q.items.length + ' 个回放, 顺序执行');
             try {
                 for (let i = 0; i < Q.items.length; i++) {
-                    if (DL.cancel) { appendLog('⏹ 队列已被中断, 剩余 ' + (Q.items.length - i) + '  个未执行'); break; }
+                    if (DL.cancel) { appendLog('⏹ 队列已被中断, 剩余 ' + (Q.items.length - i) + ' 个未执行'); break; }
                     Q.current = i;
                     const it = Q.items[i];
                     setStatus('队列 ' + (i + 1) + '/' + Q.items.length + ' · 正在处理...');
-                    appendLog('—— 队列 [' + (i + 1) + '/' + Q.items.length + ']' +
-                        (it.roomId ? 'roomId=' + it.roomId + '' : '') + 'liveUuid=' + it.liveUuid);
+                    appendLog('—— 队列 [' + (i + 1) + '/' + Q.items.length + '] ' +
+                        (it.roomId ? 'roomId=' + it.roomId + ' ' : '') + 'liveUuid=' + it.liveUuid);
                     let itemErr = '';
                     try {
                         await run(it.roomId, it.liveUuid, {
@@ -4663,10 +4665,10 @@
                 if (skipped > 0) summary += ' · 未执行 ' + skipped;
                 appendLog(summary);
                 if (okList.length) {
-                    appendLog('   ✅' + okList.map((o) => o.name || o.liveUuid).slice(0, 8).join(',') +
-                        (okList.length > 8 ? ' 等 ' + okList.length + '  个' : ''));
+                    appendLog('   ✅ ' + okList.map((o) => o.name || o.liveUuid).slice(0, 8).join(',') +
+                        (okList.length > 8 ? ' 等 ' + okList.length + ' 个' : ''));
                 }
-                failList.slice(0, 5).forEach((f) => appendLog('   ❌' + f.liveUuid + '' + f.err));
+                failList.slice(0, 5).forEach((f) => appendLog('   ❌ ' + f.liveUuid + ' ' + f.err));
                 setStatus(summary + (bad ? ' (点状态栏看详情)' : ''), bad > 0);
                 try { window.__renderRetryRow && window.__renderRetryRow(); } catch (e) { }
             }
@@ -4701,7 +4703,7 @@
                 const { roomId, liveUuid } = parseUrl(raw);
                 run(roomId, liveUuid, opts);
             } catch (e) {
-                setStatus('❌' + e.message, true);
+                setStatus('❌ ' + e.message, true);
             }
         });
 
@@ -4716,8 +4718,8 @@
                 prep(p.roomId, p.liveUuid, resSel.value).then(() => {
                     if (window.__updateNameTip) window.__updateNameTip();
                     if (fillResOptions) fillResOptions(prepCache.parsed.variants, prepCache.resInfo);
-                    setStatus('✅ 就绪 ·' + (prepCache.model.title || '未命名') +
-                        ' · ' + prepCache.parsed.segments.length + '  个切片, 可开始下载');
+                    setStatus('✅ 就绪 · ' + (prepCache.model.title || '未命名') +
+                        ' · ' + prepCache.parsed.segments.length + ' 个切片, 可开始下载');
                 }).catch((e) => {
                     setStatus('⚠ 预取失败:' + e.message + ' (点击下载将重新获取)', true);
                 });
