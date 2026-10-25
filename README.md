@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-3.6.4-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-3.6.5-informational)](CHANGELOG.md)
 
 通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件. **无需登录钉钉账号**即可下载公开可访问的回放，在回放页点一下即可.
 
@@ -12,7 +12,7 @@
 
 ---
 
-## 功能（v3.6.4）
+## 功能（v3.6.5）
 
 > 每个功能的修复史与实测数据都在 [CHANGELOG.md](CHANGELOG.md)，这里只讲当前行为.
 
@@ -53,6 +53,7 @@
 - **面板内嵌侧栏（v3.2.0，默认关）**：更多设置里打开后，整个面板在**页面加载时**立刻内嵌到右侧「互动/简介」页签下方（不是等解析完才嵌，侧栏晚上线会自动重试）. 面板与页签、内容区同为流内兄弟：页签固定在上、永不被遮挡，内容区按 flex 自行让位且照常滚动. 内嵌态自动切紧凑排版（可见比例 25% → 54%），顶边抓手可上下拖动调高度（默认 430px）. 内嵌态禁用拖拽与窗口重定位，几何全交给 CSS. React 切页签把面板甩掉时 1.5s 内自动挂回；侧栏消失（窄窗口/退出登录）则自动回到悬浮、回来再挂上.
 - **内嵌滚动与底栏（v3.2.1）**：内嵌时内容超出可见高度**可直接滚轮下滑**；**版本号 / 检查更新那一栏永远钉在面板最底部**，不需要滚到底才看得见（收起时自动隐藏，不留空条）. 两项在内嵌与悬浮两种形态下都生效.
 - **悬浮态滚动条（v3.6.2）**：面板拖到视口下半部分再全部展开时，可滚高度只剩一百多像素，正文会冒出一根滚动条（内层还叠着第二根）. 现在按面板实际位置实时算出还能往下长多少，展开动画途中就生效；内嵌到侧栏时自动交还给侧栏自己的高度.
+- **悬浮态隐藏滚动条外观（v3.6.5）**：点击「更多设置」展开后内容变高，悬浮态面板的滚动条在 Chromium 里渲染回浏览器默认白底样式，与深色面板割裂. 现已与内嵌态（v3.6.1）一致**只藏外观**——`scrollbar-width:none`，滚轮/触摸板/键盘滚动全部保留，只是不再露出白条.
 - **面板可拖拽（v2.4.0）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住，**收起成横条后同样能拖**. **只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧. **横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」. 窗口缩放时按上次坐标重新钳制，不会累积漂移.
 - **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化. 进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度. 收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms 弹簧曲线），并尊重系统「减少动态效果」设置.
 - **下载光环**：下载进行时面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动），收缩成横条时同样包住. 现为**首尾透明的线性渐变 + 旋转整个渐变坐标系**——没有任何长度概念，面板无论多大、什么比例，光带宽度与流速都恒定. 中间完全不涂色，**不会透进面板内部糊成色块**. 光环是面板的子元素、尺寸由 `width:100%`/`height:100%` 决定，浏览器自己保证与面板同大，不用 JS 逐帧追几何.
@@ -191,7 +192,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.6.4)
+## Features (v3.6.5)
 
 > Per-feature fix history and measurements live in [CHANGELOG.md](CHANGELOG.md); only current behaviour is listed here.
 
@@ -232,6 +233,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **Panel docked into the side column (v3.2.0, off by default)**: switch it on in 更多设置 and the whole panel embeds under the 互动/简介 tabs the moment the page loads (never after parsing; if the column mounts late it retries). The panel joins the flow as the last sibling of the tab bar, so the tabs stay on top and untouched and the content area simply flexes and keeps scrolling. A docked panel switches to a denser layout (measured visible ratio 25% → 54% with everything expanded), and a grip on the top edge resizes it (default 430px, re-clamped when the window shrinks, value remembered). While docked, dragging and window re-positioning are disabled and every geometric value belongs to CSS; the halo keeps hugging the panel. A 1.5s watchdog re-attaches the panel if a React re-render evicts it, and if the side column disappears (narrow window / logged out) the panel falls back to floating and re-docks when it returns.
 - **Scrolling and pinned footer (fixed in v3.2.1)**: with the panel docked, content taller than the visible height **scrolls with the wheel** (`.bin` used to be `overflow:hidden`, which pushed the download button 91px and 更多设置 211px below the fold — unreachable), and the **version / 检查更新 footer is pinned to the very bottom of the panel**, always visible without scrolling (it hides itself when collapsed, leaving no empty strip). Both hold in the docked and floating forms.
 - **Floating-panel scrollbar (v3.6.2)**: drag the panel into the lower half of the viewport and expand everything, and the usable height drops to about a hundred pixels — a scrollbar appears on the body, stacked on top of a second one inside it. The cap is now measured from the panel's real position, so it is already correct mid-animation; when the panel is docked into the side column it hands the height back to the column.
+- **Floating-panel scrollbar appearance hidden (v3.6.5)**: expanding 更多设置 makes the floating panel taller, and Chromium renders its scrollbar as the browser-default light track that clashes with the dark panel. Now, like the docked mode (v3.6.1), it only hides the appearance via `scrollbar-width:none` — wheel/trackpad/keyboard scrolling all still work, the white bar is just no longer drawn.
 - **Draggable panel (v2.4.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads, and it drags while collapsed too (fixed in v2.6.0). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken". The panel is re-clamped against the last known position on every window resize, so repeated resizing does not accumulate drift.
 - **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
 - **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge, and wraps the collapsed bar too. It is now a **linear gradient transparent at both ends with its whole coordinate system rotating** — there is no length in it at all, so band width and speed stay constant whatever the panel's size or aspect ratio. **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block. The halo is a child of the panel sized by `width:100%` / `height:100%`, so the browser itself guarantees it matches — no JS chasing geometry per frame.

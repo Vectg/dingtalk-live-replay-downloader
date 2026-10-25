@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.4
+// @version      3.6.5
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画.
 // @author       agent
 // @license      MIT
@@ -1722,11 +1722,17 @@
            全部保留; 悬浮态不受影响. */
         #dlr-panel.docked .bin,#dlr-panel.docked .body{scrollbar-width:none;-ms-overflow-style:none}
         #dlr-panel.docked .bin::-webkit-scrollbar,#dlr-panel.docked .body::-webkit-scrollbar{width:0;height:0;display:none}
+        /* 悬浮态同样隐藏滚动条外观 (v3.6.5): 点击「更多设置」展开后内容变高,
+           .body/.bin 的 scrollbar-width:thin 标准属性让 Chromium 忽略同规则的
+           ::-webkit-scrollbar 深色定制, 渲染回浏览器默认白底滚动条 —— 与内嵌态
+           (v3.6.1) 同一根因. 只藏外观, 滚轮/触摸板/键盘滚动全部保留. */
+        #dlr-panel:not(.docked) .bin,#dlr-panel:not(.docked) .body{scrollbar-width:none;-ms-overflow-style:none}
+        #dlr-panel:not(.docked) .bin::-webkit-scrollbar,#dlr-panel:not(.docked) .body::-webkit-scrollbar{width:0;height:0;display:none}
         /* 兜底: 面板撑高把钉钉侧栏列弄溢出时, 列自己也会冒原生滚动条 —— JS 在 dock 时
            向上探测第一个真正在滚的祖先打 data-dlr-nosb, undock 时摘除. */
         [data-dlr-nosb]{scrollbar-width:none;-ms-overflow-style:none}
         [data-dlr-nosb]::-webkit-scrollbar{width:0;height:0;display:none}
-        #dlr-panel.docked.mini .body{width:100%}
+#dlr-panel.docked.mini .body{width:100%}
         /* aria2 区块 (v3.3.0, 实验性): 主机/端口/密钥/目录 + 状态行 + 测试按钮 */
         #dlr-aria2-box{margin:6px 0;padding:6px 8px;border:1px solid #23262e;border-radius:6px}
         #dlr-aria2-box .arow{display:flex;align-items:center;gap:5px;margin:3px 0;flex-wrap:wrap}

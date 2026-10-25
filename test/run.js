@@ -1473,6 +1473,20 @@ section('智能调度');
         ok(!/\('' \+ /.test(raw), '没有残留的 (\'\' + 前缀');
     }
 
+    section('悬浮态隐藏滚动条外观（v3.6.5）');
+    {
+        // v3.6.1 只藏了内嵌态(docked)的滚动条; 点击「更多设置」展开后悬浮态
+        // .body/.bin 的 scrollbar-width:thin 标准属性让 Chromium 忽略同规则的
+        // ::-webkit-scrollbar 深色定制, 渲染回默认白底滚动条. v3.6.5 让悬浮态
+        // 也 scrollbar-width:none, 只藏外观、保留滚轮滚动. 锁源码字面量.
+        const { SRC_PATH } = require('./extract.js');
+        const raw = fs.readFileSync(SRC_PATH, 'utf8');
+        ok(raw.indexOf('#dlr-panel:not(.docked) .bin,#dlr-panel:not(.docked) .body{scrollbar-width:none') >= 0,
+            '悬浮态 .bin/.body 隐藏滚动条 (v3.6.5)');
+        ok(raw.indexOf('#dlr-panel:not(.docked) .bin::-webkit-scrollbar,#dlr-panel:not(.docked) .body::-webkit-scrollbar{width:0;height:0;display:none}') >= 0,
+            '悬浮态 webkit 滚动条隐藏 (v3.6.5)');
+        ok(/@version\s+3\.6\.5/.test(raw), '@version 已是 3.6.5');
+    }
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
