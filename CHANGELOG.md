@@ -3,6 +3,12 @@
 本文件记录本项目的所有 notable changes.
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/).
+## [3.6.6] - 2026-10-25
+### 新增
+- **光环性能模式开关**: 4K / 高 DPI 屏上下载时若觉得光环动画发卡, 在「更多设置」勾选「光环性能模式」. 只去掉光带的辉光滤镜 (`filter:drop-shadow`, 高 DPI 下最贵的全屏模糊合成, 见下「未发布」待查方向 1) 并停掉流动动画 (改为静态亮段). 位置/尺寸/圆角/展开收起跟随完全不变. 默认关闭 = 完整特效. 用 `bindChk('dlr-ring-perf', 'dlr_ring_perf', false)` 持久化, 刷新保留.
+### 测试
+- 补 5 条断言锁住性能模式开关的源码字面量 (527 条).
+
 ## [3.6.5] - 2026-10-25
 ### 修复
 - **悬浮态展开「更多设置」后的白底滚动条**: 点击「更多设置」展开后内容变高, 悬浮态面板的 `.body`/`.bin` 上 `scrollbar-width:thin` 标准属性让 Chromium 忽略同规则的 `::-webkit-scrollbar` 深色定制, 滚动条渲染回浏览器默认白底样式 (白轨 + 灰滑块, 与深色面板割裂) —— 与 v3.6.1 内嵌态修的是同一根因, 只是当时只藏了内嵌态. 悬浮态现在同样 `scrollbar-width:none` 隐藏外观, 滚轮 / 触摸板 / 键盘滚动全部保留.
@@ -80,8 +86,10 @@
   - **待查方向**（按可能性排序, 逐个验证而不是一次性全改）:
     1. **`filter: drop-shadow()` 在高 DPR 下的光栅化开销**. 光环 SVG 约 366×624px,
        在 DPR=2 的 4K 屏上等于 732×1248 物理像素, 每帧都要重新光栅化一个大面积模糊.
-       验证方式: 临时 `filter:none` 让用户在真实设备上对比. 若确认卡顿,
-       改用不带 filter 的方案（把光晕画成第二描边而非模糊）, 或只在低 DPR 时启用.
+       ~~验证方式: 临时 `filter:none` 让用户在真实设备上对比. 若确认卡顿,
+       改用不带 filter 的方案（把光晕画成第二描边而非模糊）, 或只在低 DPR 时启用.~~
+       **已由 v3.6.6 落地**: 「光环性能模式」开关即为 `filter:none` + 停动画,
+       用户可在真实设备上一键对比, 无需改代码.
     2. **`stroke-dashoffset` 动画触发的重绘范围**. 光带沿 1938px 周长移动, 每帧
        可能让整条 SVG 重绘. 验证方式: 换成只动 `transform` 的方案, 或用
        `will-change` / 独立合成层提示浏览器.
@@ -857,6 +865,7 @@ tag `v1.6.8` 打在 `add0163`——即 1.6.9 之前的最后一个提交, 边界
 [3.6.1]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.3...v3.6.0
 [3.5.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.5.2...v3.5.3
+[3.6.6]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.5...v3.6.6
 [未发布]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.3...HEAD
 [3.6.4]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.3...v3.6.4
 [3.6.3]: https://github.com/Vectg/dingtalk-live-replay-downloader/compare/v3.6.2...v3.6.3

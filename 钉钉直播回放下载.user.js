@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         钉钉直播回放下载器（免登录）
 // @namespace    dingtalk.live.replay
-// @version      3.6.5
+// @version      3.6.6
 // @description  钉钉直播回放下载器：免登录抓取 m3u8，支持 MP4(默认,已修时长/进度条)/TS、截取时长、面板内嵌侧栏(实验性)、发送到 aria2(实验性)、智能调度（贪心优先+并发自适应）、帧级精确截取(实验性)、下载队列、自定义分辨率、完成/失败通知与提示音、失败切片单独重试、导出 m3u8 与诊断日志、毛玻璃面板、收缩为图标、并发与重试、多码率、AES-128、fMP4、进度动画.
 // @author       agent
 // @license      MIT
@@ -1890,6 +1890,14 @@
             #dlr-panel,#dlr-panel *{transition-duration:0.01ms !important;animation-duration:0.01ms !important}
             #dlr-ring .ring-beam{animation:none !important}
         }
+        /* 光环性能模式 (v3.6.6): 4K/高 DPI 屏幕上, 光带的 3s 无限 dash 动画叠加
+           filter:drop-shadow 会让整条光带每帧重新做一次模糊合成, 合成开销与面板
+           周长成正比 —— 面板越大越卡. 开启后:
+             1) 摘掉 filter (最高 DPI 下最贵的一步: 全屏模糊重绘)
+             2) 光带停在上次位置, 不再无限动画 (保留静态亮段, 光环仍可见)
+             3) 过渡期的逐帧 rAF 照样保留, 展开/收起时仍跟得上
+           只降特效, 不改几何 —— 光环位置、尺寸、圆角在所有档位完全一致. */
+        #dlr-ring.perf .ring-beam{filter:none;animation:none}
         /* 毛玻璃：半透明背景 + 背景模糊 + 高光描边. 不透明时无模糊开销 */
         #dlr-panel.frost .body{background:rgba(22,24,29,.72);border-color:rgba(255,255,255,.09);
             box-shadow:0 12px 34px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07)}
@@ -2003,6 +2011,8 @@
                         <input type="checkbox" id="dlr-frameclip">帧级精确截取</label>
                     <label class="chk"><input type="checkbox" id="dlr-prefetch">预取播放信息</label>
                     <label class="chk"><input type="checkbox" id="dlr-frost">开启毛玻璃效果</label>
+                    <label class="chk" title="4K / 高 DPI 屏上下载时若觉得光环动画发卡, 勾上这项. 只去掉光带的辉光滤镜与流动动画(改为静态亮段), 光环的位置/尺寸/圆角不变, 展开收起时照样跟随. 默认关闭 = 完整特效.">
+                        <input type="checkbox" id="dlr-ring-perf">光环性能模式</label>
                     <label class="chk"><input type="checkbox" id="dlr-autoupdate">自动检查更新</label>
                     <label class="chk" title="拖动面板时自动收起 更多设置 与输出区. 默认开启.">
                         <input type="checkbox" id="dlr-drag-collapse">拖动时自动收起设置</label>
@@ -3724,6 +3734,19 @@
         const applyFrost = () => panel.classList.toggle('frost', frost.checked);
         frost.addEventListener('change', applyFrost);
         applyFrost();
+        // 光环性能模式 (v3.6.6): 只切 CSS 类, 不动几何. ring 元素在 init() 里早于此处创建,
+        // 用 id 取一次即可; 取不到时静默跳过(不影响其他功能).
+        const ringPerf = bindChk('dlr-ring-perf', 'dlr_ring_perf', false);
+        const applyRingPerf = () => {
+            const rg = document.getElementById('dlr-ring');
+            if (!rg) return;
+            rg.classList.toggle('perf', !!ringPerf.checked);
+            // 打开性能模式后立刻同步一次: 光带已停, 要保证 dasharray 匹配当前几何
+            // (ResizeObserver 也会兜住后续变化, 这里只是让第一次切换立即生效)
+            try { if (ringPerf.checked && window.__ringSync) window.__ringSync(); } catch (e) { }
+        };
+        ringPerf.addEventListener('change', applyRingPerf);
+        applyRingPerf();
         const autoUpd = bindChk('dlr-autoupdate', 'dlr_autoupdate', true);   // 自动检查更新：默认开启
         // 更新源：默认 Gitee（国内可达）. 改了立刻重查一次，别让用户等下次自动检查.
         const updSrcSel = $('dlr-updsrc');

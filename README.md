@@ -2,7 +2,7 @@
 
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-userscript-blue)](https://www.tampermonkey.net/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Changelog](https://img.shields.io/badge/CHANGELOG-3.6.5-informational)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-3.6.6-informational)](CHANGELOG.md)
 
 通过公开接口获取钉钉直播**回放**的 m3u8 播放列表，浏览器内下载全部切片并拼成一个文件. **无需登录钉钉账号**即可下载公开可访问的回放，在回放页点一下即可.
 
@@ -12,7 +12,7 @@
 
 ---
 
-## 功能（v3.6.5）
+## 功能（v3.6.6）
 
 > 每个功能的修复史与实测数据都在 [CHANGELOG.md](CHANGELOG.md)，这里只讲当前行为.
 
@@ -57,6 +57,7 @@
 - **面板可拖拽（v2.4.0）**：按住面板标题区（光标变抓手）即可拖到任意位置，位置自动记住，**收起成横条后同样能拖**. **只有按在空白处才触发拖拽**——落在输入框、下拉框、按钮上时浏览器原生行为照旧. **横向**夹在可视区内防止面板拖丢；**纵向**允许拖出视口——面板展开后往往比窗口还高（600px+），强行夹住会永远贴死在顶部、看着像「拖不动」. 窗口缩放时按上次坐标重新钳制，不会累积漂移.
 - **收缩为横条**：不看面板时点「收起」，缩成右下角**横向长条**（上行=回放标题，下行=进度条），不挡画面；点条展开，状态持久化. 进度条**解析阶段为蓝色、下载阶段为绿色**，下载中也可收起随时盯进度. 收起/展开用 `grid-template-rows:1fr→0fr` 做**高度平滑折叠**（内容与外壳走同一条 280ms 弹簧曲线），并尊重系统「减少动态效果」设置.
 - **下载光环**：下载进行时面板最外层有一圈流动的渐变光带（蓝→青→粉，亮段沿边缘流动），收缩成横条时同样包住. 现为**首尾透明的线性渐变 + 旋转整个渐变坐标系**——没有任何长度概念，面板无论多大、什么比例，光带宽度与流速都恒定. 中间完全不涂色，**不会透进面板内部糊成色块**. 光环是面板的子元素、尺寸由 `width:100%`/`height:100%` 决定，浏览器自己保证与面板同大，不用 JS 逐帧追几何.
+- **光环性能模式（v3.6.6）**：4K / 高 DPI 屏上下载时若觉得光环动画发卡，可在「更多设置」勾选「光环性能模式」. 只摘掉光带的辉光滤镜（`filter:drop-shadow`，高 DPI 下最贵的一步全屏模糊合成）并停掉流动动画（改为静态亮段）；位置、尺寸、圆角、展开收起跟随完全不变. 默认关闭 = 完整特效.
 - **开启毛玻璃效果**：默认**关闭**（v1.8.0 起）. 开启后面板与**收起的横条**均为半透明 + 背景模糊（`backdrop-filter`），可透出底层播放器画面. 毛玻璃态下页脚小字自动**提亮 + 文字阴影**，底层画面再亮也读得清.
 - **键盘快捷键（v2.4.0）**：`空格` 开始下载 / 下载中暂停继续（同一键随状态切换）、`Esc` 下载中立刻中断、空闲时收起或展开面板、`M` 切换收起. **在输入框里打字时一律不拦截**，不会因为想输个 `m` 就把面板收起.
 - **更多设置**：面板底部的可折叠区，**默认收起**，收纳低频选项——并发线程、重试次数、**面板状态（默认展开/收缩）**、预取播放信息、毛玻璃、**自动检查更新（默认开启）**. 前两项的取值与所有开关状态均持久化（`GM_setValue`），刷新后保留. 展开/收起箭头为 CSS chevron（90° 平滑翻转），带 260ms 弹簧缓出过渡.
@@ -168,7 +169,7 @@ GitHub Actions 在每次 push / PR 上跑三项：`node --check` 语法检查、
 ## 已知限制
 
 - 截取默认按切片边界对齐（约 30 秒粒度）；开启「帧级精确截取」后对齐到关键帧，但需要完整切片集才能建立时间轴，且仅支持 TS（fMP4 会自动退回切片对齐）.
-- **下载光环的动画在高分辨率屏幕上可能不够顺滑**（4K / 高 DPI 环境反馈）. 光环本身的位置与尺寸已正确贴合面板；卡顿只影响动画流畅度，不影响下载. 已排除「dash 动画计算量过大」这一常见猜测——实测关闭动画与开启动画的帧耗时一致. 待查方向与验证方法见 CHANGELOG 的「未发布」小节.
+- **下载光环的动画在高分辨率屏幕上可能不够顺滑**（4K / 高 DPI 环境反馈）——已提供「光环性能模式」开关（v3.6.6，见上）：勾选后去掉辉光滤镜并停掉流动动画. 光环本身的位置与尺寸始终正确贴合面板；卡顿只影响动画流畅度，不影响下载.
 - 回放签名约 10 天有效，过期后重新点一次下载即可.
 - 已授权 `@connect *`：HLS CDN 域名随回放变化（`dtliving-sz.dingtalk.com`、`dtlive-sz.dingtalk.com` 等），故放开为任意域名；介意可改成具体域名自行补充.
 - 权限仅 `GM_xmlhttpRequest`（跨域请求）、`GM_download`（保存文件）、`GM_addStyle`（面板样式）、`GM_getValue`/`GM_setValue`（记住各项设置）、`GM_notification`（完成/失败通知）；脚本只读当前页 URL 的 query 参数，不读取、不上传任何页面内容.
@@ -192,7 +193,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 
 ---
 
-## Features (v3.6.5)
+## Features (v3.6.6)
 
 > Per-feature fix history and measurements live in [CHANGELOG.md](CHANGELOG.md); only current behaviour is listed here.
 
@@ -237,6 +238,7 @@ A Tampermonkey userscript that downloads publicly accessible DingTalk live repla
 - **Draggable panel (v2.4.0)**: press the title area (cursor turns into a grab hand) and drag the panel anywhere; the position is remembered across reloads, and it drags while collapsed too (fixed in v2.6.0). **Dragging only starts from blank space** — pressing on an input, select or button leaves native behaviour untouched (v2.6.0 fix; before that the drag region wrapped the whole form and every field and dropdown was dead). **Horizontally** it is clamped inside the viewport so the panel cannot be lost; **vertically** it may leave the viewport, because the expanded panel is routinely taller than the window (600px+), and clamping it there would pin it to the top and read as "dragging is broken". The panel is re-clamped against the last known position on every window resize, so repeated resizing does not accumulate drift.
 - **Collapse to a bar**: press 「收起」 when you do not need the panel and it shrinks to a slim horizontal bar at the bottom-right (title on top, progress bar below) without covering the video; click it to expand, and the state persists. The bar is **blue while parsing and green while downloading**, and collapsing mid-download is allowed so you can watch progress. The collapse is a smooth height animation (`grid-template-rows: 1fr → 0fr`) sharing one 280ms spring curve between content and shell, and it respects the OS "reduce motion" setting.
 - **Download halo**: while a download runs, a gradient light band (blue → cyan → pink, with a bright segment flowing along the edge) wraps the panel's outermost edge, and wraps the collapsed bar too. It is now a **linear gradient transparent at both ends with its whole coordinate system rotating** — there is no length in it at all, so band width and speed stay constant whatever the panel's size or aspect ratio. **The middle is not painted at all**, so it can never bleed into the panel and blur into a colour block. The halo is a child of the panel sized by `width:100%` / `height:100%`, so the browser itself guarantees it matches — no JS chasing geometry per frame.
+- **Halo performance mode (v3.6.6)**: on 4K / high-DPI displays, if the halo animation looks choppy during a download, tick 光环性能模式 in 更多设置. It only drops the glow filter (`filter:drop-shadow`, the most expensive full-screen blur pass at high DPI) and stops the flowing animation (a static bright segment remains). Position, size, corner radius and expand/collapse tracking are all unchanged. Default off = full effect.
 - **Enable frosted glass**: **off by default** (since v1.8.0). When on, both the panel and the collapsed bar become translucent with a background blur, letting the player show through; the state persists. In frosted mode the footer's small grey text automatically brightens and gains a text shadow so it stays readable over any content.
 - **Keyboard shortcuts (v2.4.0)**: `Space` starts the download and toggles pause/resume while running, `Esc` interrupts a running download and otherwise collapses or expands the panel, `M` toggles collapse. **None of them fire while you are typing** in an input or textarea, so typing an `m` never collapses the panel.
 - **更多设置**: the collapsible area at the bottom, **collapsed by default**, holding low-frequency options — thread count, retries, **default panel state (expanded / collapsed)**, prefetch, frosted glass, **automatic update check (on by default)**. The first two and every switch persist via `GM_setValue`. The expand/collapse arrow is a CSS chevron (smooth 90° flip) with a 260ms spring-out transition.
@@ -348,7 +350,7 @@ GitHub Actions runs three jobs on every push / PR: `node --check`, the unit test
 ## Known limitations
 
 - Clipping is aligned to slice boundaries by default (about 30s granularity). With 「帧级精确截取」 enabled it snaps to keyframes, but that needs the complete segment set to build a timeline, and it works for TS only (fMP4 falls back to slice alignment).
-- **The download halo's animation can look choppy on high-resolution displays** (reported on 4K / high-DPI). The halo's position and size already hug the panel correctly; only the motion is affected, never the download. The usual suspect — an expensive `stroke-dashoffset` animation — was measured and ruled out: frames cost the same with the animation on or off. Remaining directions and how to verify them are in the CHANGELOG's "Unreleased" section.
+- **The download halo's animation can look choppy on high-resolution displays** (reported on 4K / high-DPI) — now addressed by the 光环性能模式 switch (v3.6.6, above): ticking it drops the glow filter and stops the flowing animation. The halo's position and size always hug the panel correctly; the choppiness only affects motion, never the download.
 - Replay signatures last about 10 days; press download once more after they expire.
 - `@connect *` is granted because HLS CDN hosts vary per replay (`dtliving-sz.dingtalk.com`, `dtlive-sz.dingtalk.com`, …). Replace it with explicit hosts if you prefer.
 - Permissions are limited to `GM_xmlhttpRequest` (cross-origin requests), `GM_download` (saving files), `GM_addStyle` (panel styles), `GM_getValue` / `GM_setValue` (remembering settings) and `GM_notification` (completion / failure notices). The script only reads the current page URL's query parameters; it neither reads nor uploads page content.

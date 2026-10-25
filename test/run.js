@@ -1485,8 +1485,23 @@ section('智能调度');
             '悬浮态 .bin/.body 隐藏滚动条 (v3.6.5)');
         ok(raw.indexOf('#dlr-panel:not(.docked) .bin::-webkit-scrollbar,#dlr-panel:not(.docked) .body::-webkit-scrollbar{width:0;height:0;display:none}') >= 0,
             '悬浮态 webkit 滚动条隐藏 (v3.6.5)');
-        ok(/@version\s+3\.6\.5/.test(raw), '@version 已是 3.6.5');
+        ok(/@version\s+3\.6\.6/.test(raw), '@version 已是 3.6.6');
     }
+    section('光环性能模式（v3.6.6）');
+    {
+        // 开关默认关闭(完整特效); 勾选后给 #dlr-ring 挂 perf 类, CSS 摘掉辉光滤镜与流动动画.
+        // 只降特效不改几何 —— 位置/尺寸/圆角由 syncRing 统一管, 各档位一致.
+        const { SRC_PATH } = require('./extract.js');
+        const raw = fs.readFileSync(SRC_PATH, 'utf8');
+        ok(raw.indexOf('dlr-ring-perf') >= 0, '面板存在 光环性能模式 开关 (v3.6.6)');
+        ok(raw.indexOf('dlr_ring_perf') >= 0, '开关状态持久化键 dlr_ring_perf (v3.6.6)');
+        ok(raw.indexOf('#dlr-ring.perf .ring-beam{filter:none;animation:none}') >= 0,
+            '性能模式 CSS 摘掉滤镜与动画 (v3.6.6)');
+        ok(raw.indexOf('rg.classList.toggle(\'perf\', !!ringPerf.checked)') >= 0,
+            '性能模式切换挂 perf 类 (v3.6.6)');
+        ok(/@version\s+3\.6\.6/.test(raw), '@version 已是 3.6.6');
+    }
+
 }   // ← 关闭 async function main()
 
 // ---------------------------------------------------------------- 报告
